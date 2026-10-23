@@ -1,0 +1,110 @@
+__pycache__/
+*.py[cod]
+.env
+.venv/
+demo/
+notebooks/
+poc_out/
+poc_body_level_index.py
+
+# Default data root (used when HOOPS_AI_DATA_DIR is unset). Keeps the source
+# tree and the runtime directories (uploads/, out/, embeddings_cache/, indexes/,
+# jobs/, models/, scs_map/) separate. Override the location with
+# HOOPS_AI_DATA_DIR in .env.
+/data/
+# Written to the cwd by hoops_ai when a batch item fails to embed
+error_summary.json
+
+# Shape Map export written to the cwd at runtime (index name, points, clusters).
+# A generated data artifact, not source; keep it untracked so it is never
+# committed by accident.
+server_map.json
+
+# Compiled HOOPS AI license shim (tools/build_license_shim.py): the generated
+# intermediate source, the Nuitka build/dist trees, and the ABI-tagged binary.
+# None of these may be committed. This repository is private now but may be
+# published later, and a public history cannot shed an embedded (obfuscated)
+# key once committed. Ship the .pyd/.so as a separate release artifact instead.
+/hoops_license_shim.py
+/hoops_license_shim.build/
+/hoops_license_shim.dist/
+hoops_license_shim*.pyd
+hoops_license_shim*.so
+hoops_license_shim*.pyi
+
+# Throwaway tool: imports a hoops_ai_native_bridge index into indexes/
+import_bridge_index.py
+
+# Throwaway probe: measures the CADSearch cold-start cost of a named index
+poc_searcher_coldstart.py
+
+# Throwaway probe: decides whether index tags can live in record metadata
+poc_tag_metadata.py
+
+# Scratch files from manual curl sessions, which land in the repository root
+# because that is where the shell starts. Anchored with a leading slash so the
+# real indexes/<name>/tags.json is never matched. A license key pasted into one
+# of these and committed cannot be removed from a public repository's history,
+# so prefer a working directory outside the repository entirely.
+/t.json
+/tags.json
+/body.json
+/payload.json
+/*.tmp.json
+/curl-*.json
+/scratch/
+
+# Shape Map PoC measurement harness (Step 1 of index-based map)
+/poc_shape_map.py
+/poc_out/
+
+# Measurement scripts for the articles and for investigating the map: cohesion
+# frontiers, seed sweeps, legend orderings, Ward linkages, tag consensus. They
+# are kept and used locally, but they are not part of the published sample:
+# they read a real index, print tables nobody but their author can interpret,
+# and would only invite a reader to run something that needs data this
+# repository does not ship. The unit tests that exercise them are ignored for
+# the same reason -- a test that imports a file the clone does not have is a
+# CI failure on the first run.
+/tools/probe_*.py
+/tests/test_cohesion_frontier_probe.py
+/tests/test_legend_order_probe.py
+/tests/test_seed_sweep_probe.py
+/tests/test_tag_consensus_probe.py
+
+# Throwaway probe: search-latency breakdown (embedding lookup vs. rest of the
+# search path). Recreated at the repo root each time it's needed; see plan.md
+# §2/§5.5.
+/test.py
+
+# Runtime binaries: the built helper executables (e.g. bin/scs_points[.exe]) are
+# NOT committed - they embed a HOOPS license key and this repo goes public. Only
+# bin/README.md and bin/.gitkeep are tracked; everything else in bin/ is ignored.
+/bin/*
+!/bin/.gitkeep
+!/bin/README.md
+
+# Built web client. static/app/ is a Vite build output whose bundle and engine
+# wasm are >95% @ts3d-hoops (HOOPS Web Viewer) code. The committed binary would
+# carry none of the license text that ships with the npm packages, so - like
+# bin/scs_points (see decision #16) - it is not tracked. Users build it with
+# "cd web; npm ci; npm run build". Only /static/app/ is ignored; static/
+# itself and static/.gitkeep stay tracked so the mount point exists.
+/static/app/
+
+# Runtime residue accidentally flattened into the repo root by 99bafdd (the
+# commit that moved webapi/ up to the repository root). None of these are
+# source: training_errors.log is an empty training log, and
+# .hoops_embeddings_temp/ is a scratch Zarr store written by hoops_ai during
+# embedding. Ignored so they are never re-committed.
+/training_errors.log
+/.hoops_embeddings_temp/
+
+# Office lock files, created while a document is open. They are binary noise
+# with a lifetime of one editing session.
+~$*
+
+# The editable source of the diagrams in images/. The exported PNG is tracked
+# and is what the READMEs show; a public sample has no use for the original,
+# which is only more binary to carry.
+/images/*.pptx

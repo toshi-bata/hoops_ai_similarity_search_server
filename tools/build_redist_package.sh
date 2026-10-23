@@ -1,0 +1,305 @@
+#!/usr/bin/env bash
+# build_redist_package.sh
+#
+# Linux builder for the redistributable similarity search server package.
+#
+# Creates a redistribution staging directory (redist_package/) and compresses it
+# into a timestamped redist_package_<YYYYmmdd-HHMMSS>.zip next to it. The package
+# runs on a machine WITHOUT a HOOPS AI install. It bundles:
+#   - the server source (every *.py in the repository root except the exclusions
+#     listed below, plus routers/, vendor/, static/, ...),
+#   - the compiled license shim (.so),
+#   - the default embedding checkpoint(s) under models/,
+#   - only the site-packages actually used, from tools/trace_modules.py,
+#   - a .env template (tools/redist.env.example) that contains NO license key.
+#
+# The staging directory is kept after the zip is written, so its contents can be
+# inspected.
+#
+# Usage:
+#   export HOOPS_AI_HOME=/path/to/HOOPS_AI/V1.1
+#   ./tools/build_redist_package.sh \
+#       --modules-file /tmp/used_top_level_modules.txt \
+#       --ckpt /path/to/ts3d_2M_hoops_embeddings_SIGNAL-preview.ckpt \
+#       --out-dir /path/to/staging_and_output_dir
+#
+# Prerequisites:
+#   - The compiled license shim (hoops_license_shim*.so) must already be built
+#     (tools/build_license_shim.py) and present in the repo root.
+#   - $HOOPS_AI_HOME must point to a standard HOOPS AI installation whose
+#     site-packages live at $HOOPS_AI_HOME/.venv/lib/python3.12/site-packages.
+#   - 'zip' must be on PATH (the script checks before it starts copying).
+#
+# Disk space: the full package can be several GB; check free space in --out-dir
+# (df -h) first.
+
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+MODULES_FILE=""
+OUT_DIR=""
+CKPT_FILES=()
+SAMPLE_FILES=()
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --modules-file) MODULES_FILE="$2"; shift 2 ;;
+        --ckpt)         CKPT_FILES+=("$2"); shift 2 ;;
+        --sample)       SAMPLE_FILES+=("$2"); shift 2 ;;
+        --out-dir)      OUT_DIR="$2"; shift 2 ;;
+        *) echo "unknown option: $1" >&2; exit 1 ;;
+    esac
+done
+
+if [ -z "$MODULES_FILE" ] || [ -z "$OUT_DIR" ]; then
+    echo "Usage: $0 --modules-file <trace output> --out-dir <output dir> [--ckpt <ckpt>]... [--sample <cad>]..." >&2
+    exit 1
+fi
+if [ ! -f "$MODULES_FILE" ]; then
+    echo "modules file not found: $MODULES_FILE" >&2
+    exit 1
+fi
+if [ -z "${HOOPS_AI_HOME:-}" ]; then
+    echo "Please set the HOOPS_AI_HOME environment variable" >&2
+    exit 1
+fi
+SITE_PACKAGES="$HOOPS_AI_HOME/.venv/lib/python3.12/site-packages"
+if [ ! -d "$SITE_PACKAGES" ]; then
+    echo "site-packages not found: $SITE_PACKAGES" >&2
+    exit 1
+fi
+# Checked here, not at the end: the copy stage can take many minutes and produce
+# several GB, and failing only then would waste all of it. Never finish without
+# the package the caller asked for.
+if ! command -v zip >/dev/null 2>&1; then
+    echo "ERROR: 'zip' was not found on PATH, and this script packages the result into a .zip." >&2
+    echo "  Install it (Debian/Ubuntu: sudo apt-get install zip, RHEL/Fedora: sudo dnf install zip)" >&2
+    echo "  and run this script again." >&2
+    exit 1
+fi
+
+# The compiled license shim supplies the license at runtime, so the package must
+# not ship a plaintext key. Require the shim and forbid a license line in the
+# .env template (protects the build side against shipping a key).
+SHIM="$(find "$REPO_ROOT" -maxdepth 1 -name 'hoops_license_shim*.so' | head -n1)"
+if [ -z "$SHIM" ]; then
+    echo "Compiled license shim (hoops_license_shim*.so) not found in $REPO_ROOT. Build it with tools/build_license_shim.py first." >&2
+    exit 1
+fi
+ENV_TEMPLATE="$REPO_ROOT/tools/redist.env.example"
+if [ ! -f "$ENV_TEMPLATE" ]; then
+    echo ".env template not found: $ENV_TEMPLATE" >&2
+    exit 1
+fi
+if grep -Eq '^\s*HOOPS_AI_LICENSE\s*=' "$ENV_TEMPLATE"; then
+    echo "SECURITY: $ENV_TEMPLATE contains a HOOPS_AI_LICENSE line. Remove it; the key must never ship in the package." >&2
+    exit 1
+fi
+
+STAGE="$OUT_DIR/redist_package"
+rm -rf "$STAGE"
+# Bundle the SDK site-packages under <Stage>/.venv/lib/python3.12/site-packages.
+# main.py auto-detects this bundled .venv relative to its own location, so the
+# server imports the bundled HOOPS AI without any system install.
+PYTHON_PACKAGES_DIR="$STAGE/.venv/lib/python3.12/site-packages"
+mkdir -p "$PYTHON_PACKAGES_DIR" "$STAGE/models" "$STAGE/samples"
+
+echo "[1/6] Copy server source"
+# The server is every *.py in the repository root, MINUS an explicit exclusion
+# list. Collected, never listed: when core.py was split into per-domain modules
+# this script still named five files, so 17 modules silently stopped shipping
+# and the package could not start. Collecting means a module added by the next
+# refactor is packaged automatically; only a file that must NOT ship needs a
+# line here. Keep this list identical to the one in build_redist_package.ps1
+# (tests/test_redist_packaging.py compares the two).
+EXCLUDED_SERVER_PY=(
+    # Generated by tools/build_license_shim.py as the Nuitka input. It carries
+    # the license key in plain text -- the whole point of the compiled shim is
+    # that this file never leaves the build machine. MUST stay excluded.
+    "hoops_license_shim.py"
+    # pytest-only, if one is ever added at the root.
+    "conftest.py"
+    # Throwaway probe recreated at the root when a latency question comes up.
+    "test.py"
+    # Throwaway tool: imports a hoops_ai_native_bridge index into indexes/.
+    "import_bridge_index.py"
+)
+EXCLUDED_SERVER_PY_PATTERNS=(
+    # Proof-of-concept and measurement scripts written at the repository root
+    # (all git-ignored); none of them is part of the server.
+    "poc_*.py"
+    "test_*.py"
+    "*_test.py"
+)
+server_py_count=0
+shopt -s nullglob
+for f in "$REPO_ROOT"/*.py; do
+    name="$(basename "$f")"
+    skip=""
+    for x in "${EXCLUDED_SERVER_PY[@]}"; do
+        if [ "$name" = "$x" ]; then skip=1; fi
+    done
+    for p in "${EXCLUDED_SERVER_PY_PATTERNS[@]}"; do
+        case "$name" in $p) skip=1 ;; esac
+    done
+    if [ -n "$skip" ]; then continue; fi
+    cp "$f" "$STAGE/"
+    server_py_count=$((server_py_count + 1))
+done
+shopt -u nullglob
+if [ "$server_py_count" -eq 0 ]; then
+    echo "No server modules found in $REPO_ROOT. Run this script from a full checkout." >&2
+    exit 1
+fi
+echo "  $server_py_count server modules"
+# Non-Python files the server itself needs. Listed rather than collected: the
+# repository root also holds README/LICENSE/.gitignore and other files that are
+# not part of a deployment.
+for f in requirements.txt start_server.sh; do
+    [ -f "$REPO_ROOT/$f" ] && cp "$REPO_ROOT/$f" "$STAGE/"
+done
+for d in routers vendor static; do
+    [ -d "$REPO_ROOT/$d" ] && cp -r "$REPO_ROOT/$d" "$STAGE/"
+done
+# The built web client lives under static/app (copied by the static/ recursion
+# above). It is a build output that is not part of the repository (users build it
+# with npm). Fail hard if it is missing, the same way the scs_points binary below
+# does, so we never ship a package without a client.
+if [ ! -f "$REPO_ROOT/static/app/index.html" ]; then
+    echo "ERROR: static/app/index.html is missing. Build the web client (cd web && npm ci && npm run build) before packaging." >&2
+    exit 1
+fi
+# Third-party license notices. THIRD-PARTY-NOTICES.md covers the web client's
+# npm dependencies; third_party_notices/ carries the acknowledgment texts for the
+# third-party components embedded in the compiled HOOPS binaries (HWV browser
+# viewer / wasm engine, and the libsc linked into bin/scs_points). Ship both
+# alongside the built client so the redistributable carries the notices.
+[ -f "$REPO_ROOT/THIRD-PARTY-NOTICES.md" ] && cp "$REPO_ROOT/THIRD-PARTY-NOTICES.md" "$STAGE/"
+[ -d "$REPO_ROOT/third_party_notices" ] && cp -r "$REPO_ROOT/third_party_notices" "$STAGE/"
+# The package is handed to people on its own, without this repository's README,
+# so ship the sample/PoC disclaimer and the source licence alongside it.
+[ -f "$REPO_ROOT/DISCLAIMER.txt" ] && cp "$REPO_ROOT/DISCLAIMER.txt" "$STAGE/"
+[ -f "$REPO_ROOT/LICENSE" ] && cp "$REPO_ROOT/LICENSE" "$STAGE/"
+# The scs_points point-cloud tool is a license-bearing binary that is not
+# committed (the repository goes public). The operator builds it from
+# tools/scs_points and drops the executable in bin/. Ship it so the redist
+# package can serve the Shape Map point cloud; fail hard if it is missing so we
+# never ship a package whose /map/scs route is dead.
+# The -x test is deliberate and has no PowerShell counterpart: on Linux a copy
+# that lost its execute bit would fail only at run time, while Windows has no
+# execute permission to check, so the .ps1 tests for existence alone.
+SCS_EXE_PATH="$REPO_ROOT/bin/scs_points"
+if [ ! -x "$SCS_EXE_PATH" ]; then
+    echo "ERROR: bin/scs_points is missing or not executable. Build it from tools/scs_points (see tools/scs_points/README.md) before packaging." >&2
+    exit 1
+fi
+mkdir -p "$STAGE/bin"
+cp "$SCS_EXE_PATH" "$STAGE/bin/"
+cp "$SHIM" "$STAGE/"
+cp "$ENV_TEMPLATE" "$STAGE/.env"
+
+echo "[2/6] Copy checkpoints and sample CAD files"
+for f in "${CKPT_FILES[@]:-}"; do [ -n "$f" ] && cp "$f" "$STAGE/models/"; done
+for f in "${SAMPLE_FILES[@]:-}"; do [ -n "$f" ] && cp "$f" "$STAGE/samples/"; done
+
+echo "[3/6] Copy only the required items from site-packages based on the trace results"
+
+# Mapping for cases where the import name and .libs directory name differ
+# (e.g. import PIL -> pillow.libs). Add a mapping if a package fails to load.
+declare -A LIBS_DIR_ALIAS=(
+    [PIL]="pillow.libs"
+    [sklearn]="scikit_learn.libs"
+    [cv2]="opencv_python.libs"
+    [faiss]="faiss_cpu.libs"
+)
+
+# Tech Soft 3D packages: redistributability must be confirmed individually under
+# the TPA/license agreement. Add any newly used Tech Soft 3D package here.
+declare -A TS3D_CORE_PACKAGES=(
+    [hoops_ai]=1
+    [hoops_exchange]=1
+    [hoops_converter]=1
+    [hoops_web_viewer]=1
+    # hoops_viewer is the Tech Soft 3D HOOPS Web Viewer package; it carries the
+    # authoring assets bundled under static/javascript/communicator/ (ui-kit /
+    # web-viewer-components).
+    [hoops_viewer]=1
+    # HOOPS Communicator / Web Viewer authoring libraries (libsc, hps_core) are
+    # statically linked into the scs_points tool shipped under bin/. They are not
+    # bundled as Python packages, but their redistributability must likewise be
+    # confirmed individually under the TPA before distribution.
+    [libsc]=1
+    [hps_core]=1
+)
+
+MANIFEST="$STAGE/THIRD_PARTY_MANIFEST.txt"
+{
+    echo "# Bundled Python package origin / redistributability manifest"
+    echo "# Generated at: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    echo "#"
+    echo "# [TechSoft3D] Packages provided by Tech Soft 3D. Whether they may be"
+    echo "#   redistributed to end users depends on the specific terms of the"
+    echo "#   TPA (partner agreement). Always confirm with your sales/licensing"
+    echo "#   contact before distribution. Validation in this repository is only"
+    echo "#   a technical runtime check and does not confirm license entitlement."
+    echo "# [ThirdParty] Other third-party packages (mainly OSS). Many are usually"
+    echo "#   low-risk for redistribution, but check individually whether each"
+    echo "#   package requires LICENSE notices. Also refer to the dependency"
+    echo "#   license list below:"
+    echo "#   https://docs.techsoft3d.com/hoops/ai/resources/Acknowledgments.html"
+    echo "#"
+    echo "# Category,PackageName"
+} > "$MANIFEST"
+
+cd "$SITE_PACKAGES"
+while read -r pkg; do
+    [ -z "$pkg" ] && continue
+    if [ -n "${TS3D_CORE_PACKAGES[$pkg]:-}" ]; then
+        echo "TechSoft3D,$pkg" >> "$MANIFEST"
+    else
+        echo "ThirdParty,$pkg" >> "$MANIFEST"
+    fi
+    if [ -d "$pkg" ]; then
+        cp -r "$pkg" "$PYTHON_PACKAGES_DIR/"
+    else
+        for m in "$pkg".*; do
+            [ -e "$m" ] && [[ "$m" != *dist-info ]] && cp "$m" "$PYTHON_PACKAGES_DIR/"
+        done
+    fi
+    for di in "${pkg}"-*.dist-info "${pkg}"*.dist-info; do
+        [ -d "$di" ] && cp -r "$di" "$PYTHON_PACKAGES_DIR/" 2>/dev/null || true
+    done
+    if [ -d "${pkg}.libs" ]; then
+        cp -r "${pkg}.libs" "$PYTHON_PACKAGES_DIR/"
+    fi
+    if [ -n "${LIBS_DIR_ALIAS[$pkg]:-}" ] && [ -d "${LIBS_DIR_ALIAS[$pkg]}" ]; then
+        cp -r "${LIBS_DIR_ALIAS[$pkg]}" "$PYTHON_PACKAGES_DIR/"
+    fi
+done < "$MODULES_FILE"
+cd - > /dev/null
+echo "  -> Generated manifest: $MANIFEST"
+
+echo "[4/6] Final license-key safety check on the staged .env"
+if grep -Eq '^\s*HOOPS_AI_LICENSE\s*=' "$STAGE/.env"; then
+    echo "SECURITY: the staged .env contains a HOOPS_AI_LICENSE line. Aborting." >&2
+    exit 1
+fi
+
+echo "[5/6] Compress the staging directory"
+# The staging directory is KEPT: it is what an operator inspects when something
+# is missing from a package. The zip is the artifact that gets handed over.
+# Timestamped so two builds on the same day never silently overwrite each other.
+ZIP_NAME="redist_package_$(date +%Y%m%d-%H%M%S).zip"
+# Zip from OUT_DIR so the archive expands to redist_package/ rather than
+# scattering its contents or embedding absolute paths.
+(cd "$OUT_DIR" && zip -r -q "$ZIP_NAME" "redist_package")
+ZIP_PATH="$OUT_DIR/$ZIP_NAME"
+
+echo "[6/6] Done"
+du -sh "$STAGE"
+echo "  -> $STAGE"
+du -sh "$ZIP_PATH"
+echo "  -> $ZIP_PATH"
+echo "(This is a sample package produced by a sample script. See DISCLAIMER.txt.)"
+echo "(Ship the .zip; the staging directory is kept so you can inspect what went in.)"
+echo "(See $STAGE/THIRD_PARTY_MANIFEST.txt for bundled package origin and redistribution category.)"

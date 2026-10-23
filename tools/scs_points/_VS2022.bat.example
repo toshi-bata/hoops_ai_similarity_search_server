@@ -1,0 +1,15 @@
+REM scs_points - Windows build launcher.
+REM
+REM Copy this file to _VS2022.bat (which is git-ignored) and edit the paths, then
+REM run it to open the solution in Visual Studio with the SDK location exported.
+REM You MUST launch Visual Studio through this .bat (not by double-clicking the
+REM .sln), so the variable below is present in the Visual Studio process and the
+REM project can find sc_store.h and the libsc libraries.
+REM
+REM HVISUALIZE_WEB_INSTALL_DIR points at the root of the HOOPS Visualize Web SDK
+REM (the folder that contains authoring\libsc). The project resolves headers and
+REM libraries relative to this variable, so no absolute SDK path is stored in the
+REM project file.
+SET HVISUALIZE_WEB_INSTALL_DIR=Path\to\Communicator\HOOPS_Visualize_Web_2026.2.0
+
+CALL "C:\Program Files\Microsoft Visual Studio\2022\Professional\Common7\IDE\devenv.exe" scs_points.sln

@@ -1,0 +1,7 @@
+* text=auto
+
+# Documents obtained from outside this repository. Keeping them out of the text
+# machinery is an operational rule, not a legal judgement: git must never rewrite
+# a byte of a file we did not author, so what ships is what we received.
+third_party_notices/** -text
+THIRD-PARTY-NOTICES.md -text

@@ -1,0 +1,28 @@
+# Optional dependency: the Shape Map's UMAP layout.
+#
+# Not in requirements.txt on purpose. umap-learn pulls in numba, llvmlite,
+# pynndescent and scikit-learn, which is a large addition for a feature that
+# only changes how the map is drawn. Without it the server runs exactly as
+# before and the map uses its PCA layout; /client-config reports
+# umap_available: false and the web client does not offer the choice.
+#
+# Install it into the SAME Python that runs the server -- the HOOPS AI virtual
+# environment, the one README's "Install dependencies" step uses:
+#
+#   <Path\to\HOOPS_AI\install\dir>\.venv\Scripts\pip.exe install -r requirements-umap.txt
+#
+# The server reads this at import time, so restart it afterwards.
+#
+# The floor matters, though not as dramatically as it might read. The binding
+# constraint in this dependency tree is numba's: 0.68.0 declares
+# numpy>=1.22,<2.6. Every numpy available on Python 3.12 (1.26 through 2.5) sits
+# inside that window, so pip adds numba and leaves numpy alone -- verified by a
+# dry run from a clean environment at both ends of that range. An OLD
+# umap-learn, though, pulls an old numba whose window is narrower, and pip is
+# then free to resolve the conflict by moving the numpy the HOOPS AI SDK is
+# using. The floor keeps it out of that branch. 0.5.12 is the version this was
+# verified against (HOOPS AI V1.1, numpy 1.26.4). If pip reports it cannot
+# satisfy the floor, that is the resolver saying the two do not fit on this
+# machine: do not force it, leave the layout uninstalled.
+# README's "Optional: the UMAP layout" has the full procedure.
+umap-learn>=0.5.12

@@ -1,0 +1,3 @@
+# Node build environment only. The build OUTPUT (../static/app) is committed;
+# these local build inputs are not.
+node_modules/

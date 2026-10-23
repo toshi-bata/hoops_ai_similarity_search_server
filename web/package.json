@@ -1,0 +1,20 @@
+{
+  "name": "hoops-ai-similarity-web-client",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Reference web client for the HOOPS AI Similarity Search Server: gallery + 3D viewer.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@ts3d-hoops/web-viewer-components": "2026.2.0",
+    "@ts3d-hoops/web-viewer": "2026.2.0",
+    "@ts3d-hoops/sc-engine": "2026.2.0"
+  },
+  "devDependencies": {
+    "vite": "5.4.20"
+  }
+}

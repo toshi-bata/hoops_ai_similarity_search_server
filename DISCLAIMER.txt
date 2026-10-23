@@ -1,0 +1,16 @@
+SAMPLE / PROOF OF CONCEPT -- NOT A PRODUCT
+
+This package was produced by the sample packaging script in the
+hoops_ai_similarity_search_server repository. It is a demonstration of how such a
+package can be assembled. It is not a product, it is not supported, and it is not
+something you would ship as is.
+
+The HOOPS SDK components included here are governed by the Technology Partner
+Agreement and the other terms that apply to your license. Whether you may
+redistribute them, and in what form, depends on your own agreement. Check the terms
+that apply to you.
+
+THIRD-PARTY-NOTICES.md, third_party_notices/ and THIRD_PARTY_MANIFEST.txt in this
+package are illustrative of a process, not a compliance artifact. They were produced
+for one dependency set at one point in time and have not been reviewed by counsel.
+If you ship a product, generate and verify your own notices for your own build.

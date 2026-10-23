@@ -1,0 +1,2539 @@
+/* Plain, framework-free styles. Kept in one file so the visual structure is
+   easy to scan and adjust. */
+
+:root {
+  --bg: #f4f5f7;
+  --panel: #ffffff;
+  --border: #d5d8dd;
+  --text: #1f2328;
+  --muted: #6b7280;
+  --accent: #0969da;
+  --error-bg: #ffebe9;
+  --error-border: #ff8182;
+  --error-text: #82071e;
+  /* Width of the viewer's vertical icon rail (.part-toolbar); the docked
+     tree/tools panels and the map legend all start right after it. */
+  --viewer-rail-width: 44px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* The hidden attribute must always win. An element-level display rule (such as
+   the flex overlay below) otherwise overrides the user-agent [hidden] rule,
+   which would leave the loading overlay permanently visible. */
+[hidden] {
+  display: none !important;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  color: var(--text);
+  background: var(--bg);
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Header ------------------------------------------------------------------ */
+.app-header {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 10px 16px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+
+.app-title {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0;
+}
+
+/* Top-left menu (Open Empty Viewer / Open local file...), styled like a
+   compact icon-button dropdown -- see initAppMenu() in main.js. */
+.app-menu {
+  position: relative;
+  margin-right: -12px;
+}
+
+.app-menu-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  color: var(--text);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.app-menu-button:hover {
+  background: var(--bg);
+  border-color: var(--border);
+}
+
+.app-menu-popup {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  min-width: 180px;
+  padding: 4px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  z-index: 10;
+}
+
+.app-menu-item {
+  padding: 8px 10px;
+  font-size: 13px;
+  text-align: left;
+  color: var(--text);
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.app-menu-item:hover {
+  background: var(--bg);
+}
+
+.index-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  background: #fafbfc;
+}
+
+.index-picker {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.index-picker select {
+  flex: 1;
+  min-width: 0;
+  margin-left: 6px;
+  font-size: 13px;
+  padding: 4px 6px;
+}
+
+/* "New..." / "Delete" buttons next to the index picker. */
+.index-admin {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.index-admin-button {
+  font-size: 12px;
+  padding: 4px 10px;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--panel);
+  color: var(--text);
+}
+
+.index-admin-button:disabled {
+  color: var(--muted);
+  cursor: default;
+}
+
+.index-admin-danger {
+  color: var(--error-text);
+  border-color: var(--error-border);
+}
+
+.index-admin-danger:disabled {
+  color: var(--muted);
+  border-color: var(--border);
+}
+
+/* Split layout ------------------------------------------------------------ */
+.app-main {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  /* Width of the gallery panel; changed by dragging the resizer (see main.js). */
+  --panel-width: 420px;
+}
+
+/* Gallery panel: a fixed-width column on the right. Its width is set from the
+   --panel-width variable so the resizer only has to update one value. The
+   gallery inside adapts its column count to this width. */
+.side-panel {
+  width: var(--panel-width);
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--border);
+  background: var(--panel);
+}
+
+/* Vertical drag handle between the viewer and the gallery panel. Positioned so
+   the collapse knob can sit on top of a strip too narrow to contain it. */
+.panel-resizer {
+  flex: none;
+  width: 6px;
+  cursor: col-resize;
+  background: var(--border);
+  position: relative;
+}
+
+.panel-resizer:hover,
+.panel-resizer.dragging {
+  background: var(--accent);
+}
+
+/* With the panel hidden the strip is the only way back, so it stops being a
+   6px hairline: it widens to the knob's width and drops the col-resize cursor,
+   which would promise a drag that is deliberately ignored while collapsed. */
+.panel-resizer.collapsed {
+  width: 18px;
+  cursor: default;
+}
+
+/* The collapse knob. Centred vertically on the handle and allowed to overflow
+   it horizontally, so it stays clickable while the handle is a hairline. */
+.panel-toggle {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 18px;
+  height: 44px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.panel-toggle:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+/* Each mode's content fills the pane below the toggle. */
+.pane-view {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* Browse / Search toggle -------------------------------------------------- */
+.mode-toggle {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+}
+
+.mode-button {
+  flex: 1;
+  padding: 8px 0;
+  font-size: 13px;
+  background: #eef1f4;
+  border: none;
+  border-right: 1px solid var(--border);
+  cursor: pointer;
+  color: var(--muted);
+}
+
+.mode-button:last-child {
+  border-right: none;
+}
+
+/* The Estimate tab is demo-only (HOOPS_AI_DEMO) and is hidden, not removed, so
+   the structural :last-child above still matches it -- which would leave
+   Results carrying a divider at the right edge of the row. Drop it from the
+   last VISIBLE button instead. */
+.mode-button:not([hidden]):has(+ .mode-button[hidden]) {
+  border-right: none;
+}
+
+.mode-button.active {
+  background: var(--panel);
+  color: var(--text);
+  font-weight: 600;
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.viewer-pane {
+  flex: 1;
+  position: relative;
+  min-width: 0;
+  background: #2b2f36;
+}
+
+/* Gallery ----------------------------------------------------------------- */
+.gallery-status {
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--muted);
+  border-bottom: 1px solid var(--border);
+}
+
+/* Scroll viewport. It scrolls; the inner .gallery-spacer supplies the full
+   height for all parts so the scrollbar reflects the whole index. */
+.gallery-grid {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  position: relative;
+}
+
+/* Tall inner element sized to totalRows * rowHeight (set from gallery.js).
+   Tiles are absolutely positioned inside it. */
+.gallery-spacer {
+  position: relative;
+  width: 100%;
+}
+
+/* A fixed-size tile. Its width is set inline from config.TILE_WIDTH; the
+   thumbnail keeps a 4:3 ratio and the meta area has a fixed height, so every
+   tile is the same size regardless of panel width. */
+.tile {
+  position: absolute;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #fff;
+  cursor: pointer;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.tile.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(9, 105, 218, 0.3);
+}
+
+.tile.placeholder {
+  cursor: default;
+  background: #f7f8fa;
+}
+
+.tile .thumb {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: #f0f1f3;
+}
+
+/* Score badge over the thumbnail (search results only). */
+.tile .score-badge {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  padding: 1px 5px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #fff;
+  background: rgba(9, 105, 218, 0.85);
+  border-radius: 8px;
+}
+
+/* Assembly diagnostic lines (search results only). */
+.tile .metric {
+  font-size: 10px;
+  color: var(--muted);
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tile .thumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+/* Multi-select checkbox in the thumbnail corner (Browse gallery only). Sits
+   above the image; larger hit target than the default, faintly backed so it
+   stays visible over light and dark thumbnails. */
+.tile .thumb .tile-select {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  cursor: pointer;
+  z-index: 1;
+  accent-color: var(--accent, #0969da);
+  background: rgba(255, 255, 255, 0.85);
+  border-radius: 3px;
+}
+
+.tile .thumb-missing {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.tile .meta {
+  height: 46px;
+  padding: 4px 6px;
+  overflow: hidden;
+}
+
+.tile .filename {
+  font-size: 11px;
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  word-break: break-all;
+}
+
+.tile .tags {
+  margin-top: 3px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  overflow: hidden;
+}
+
+.tile .tag {
+  font-size: 10px;
+  background: #eef1f4;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0 6px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+/* Search panel ------------------------------------------------------------ */
+.search-panel {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  background: #fafbfc;
+}
+
+/* Registration row: the two "put files into this index" buttons, directly
+   under the index picker. Named after .index-bar (and matching its padding and
+   background) so the two rows read as one block about the current index. The
+   -bar name alone was already taken by the registration progress track further
+   down this file, which quietly flattened this row to 8px. Replaces the old
+   .open-row, which held only the inline register button inside the search
+   panel while its bulk-registration twin lived in the window header. */
+.index-register-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  background: #fafbfc;
+}
+
+/* Properties area below the thumbnails (index or selected-part properties). */
+.info-panel {
+  border-top: 1px solid var(--border);
+  background: #fafbfc;
+  padding: 10px 12px;
+  max-height: 30%;
+  overflow-y: auto;
+  flex: none;
+  position: relative;
+}
+
+.props {
+  margin: 0;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 10px;
+  font-size: 12px;
+}
+
+.props:empty {
+  display: none;
+}
+
+.props dt {
+  color: var(--muted);
+}
+
+.props dd {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.search-options {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-top: 10px;
+  font-size: 12px;
+}
+
+.search-kind {
+  display: flex;
+  gap: 10px;
+}
+
+.search-options button {
+  margin-left: auto;
+  font-size: 12px;
+  padding: 5px 14px;
+  cursor: pointer;
+}
+
+.search-options button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.search-status {
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--muted);
+  border-bottom: 1px solid var(--border);
+}
+
+.search-status .tag-note {
+  margin-top: 4px;
+  color: var(--accent);
+}
+
+/* Similarity threshold slider above the results grid. */
+.threshold-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--muted);
+  border-bottom: 1px solid var(--border);
+}
+
+.threshold-bar input[type='range'] {
+  flex: 1;
+}
+
+.threshold-value {
+  min-width: 44px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Plain (non-virtual) grid: results are capped at top_k. */
+.search-grid {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-content: start;
+  gap: 12px;
+  padding: 12px;
+}
+
+/* Search tiles size to their diagnostics instead of the gallery's fixed row. */
+.search-grid .tile {
+  position: static;
+}
+
+.search-grid .tile .meta {
+  height: auto;
+}
+
+.search-empty {
+  color: var(--muted);
+  font-size: 12px;
+  padding: 4px;
+}
+
+/* Estimate panel ---------------------------------------------------------- */
+/* The Estimate view scrolls as one column inside its own tab: the neighbours
+   table and the predictions scroll together here, so the page (and the 3D
+   viewer beside it) does not scroll, and tall content cannot spill over the
+   properties panel below. Browse/Results scroll through their inner grid
+   instead, so this is scoped to the Estimate view only. */
+#estimate-view {
+  overflow-y: auto;
+}
+
+/* Top-neighbours table: a horizontally scrollable field-by-field matrix of the
+   record-bearing neighbours that fed the prediction, each with a thumbnail. */
+.estimate-neighbors {
+  padding: 8px 12px;
+}
+
+/* Section heading shared by the neighbours table and the predictions table. */
+.estimate-section-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 8px;
+}
+
+.estimate-neighbors-scroll {
+  overflow-x: auto;
+}
+
+.estimate-neighbors-table td {
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.estimate-neighbor-thumb {
+  width: 44px;
+  height: 44px;
+  object-fit: contain;
+  background: var(--panel, #fff);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  display: block;
+}
+
+.estimate-neighbor-row {
+  cursor: pointer;
+}
+
+.estimate-neighbor-flagged td {
+  background: #fdECEC;
+}
+
+.estimate-predictions {
+  padding: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.estimate-empty {
+  color: var(--muted);
+  font-size: 12px;
+  padding: 8px 0;
+}
+
+.estimate-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.estimate-table th {
+  text-align: left;
+  color: var(--muted);
+  font-weight: 600;
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--border);
+}
+
+.estimate-row td {
+  padding: 6px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+  cursor: pointer;
+}
+
+.estimate-row.expanded td {
+  border-bottom: none;
+}
+
+.estimate-details td {
+  padding: 0 6px 8px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.estimate-detail {
+  padding: 2px 0;
+}
+
+/* Distribution histogram for a numeric prediction (lead time, lot size, unit
+   cost): bars built from the neighbours' values, with a labelled vertical
+   marker at the exact predicted value so it is not read as a median. Bars are
+   bottom-aligned so their percentage heights read as a distribution. */
+.estimate-hist {
+  max-width: 320px;
+  margin: 4px 0 6px;
+}
+
+/* Holds the bars and the absolutely-positioned predicted marker. The top margin
+   leaves room for the marker's label above the bars. */
+.estimate-hist-plot {
+  position: relative;
+  height: 48px;
+  margin-top: 14px;
+}
+
+.estimate-hist-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 100%;
+}
+
+.estimate-hist-bar {
+  flex: 1;
+  min-height: 1px;
+  background: rgba(9, 105, 218, 0.35);
+  border-radius: 2px 2px 0 0;
+}
+
+/* Vertical line at the predicted value, spanning the plot height. */
+.estimate-hist-marker {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  border-left: 2px solid var(--accent);
+  transform: translateX(-1px);
+  pointer-events: none;
+}
+
+.estimate-hist-marker-label {
+  position: absolute;
+  top: -13px;
+  left: 0;
+  transform: translateX(-50%);
+  padding: 0 3px;
+  font-size: 10px;
+  line-height: 12px;
+  white-space: nowrap;
+  color: var(--accent);
+  background: var(--panel);
+}
+
+.estimate-hist-axis {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.estimate-route {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.estimate-muted {
+  color: var(--muted);
+}
+
+.estimate-chip {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.chip-ready {
+  background: #e3f5e6;
+  color: #1a7f37;
+}
+
+.chip-review {
+  background: #fbf3d6;
+  color: #9a6700;
+}
+
+.chip-insufficient {
+  background: #eceef1;
+  color: var(--muted);
+}
+
+/* Evidence tile with a lifecycle warning (discontinued / quality hold). */
+.tile.tile-flagged {
+  outline: 2px solid #d1242f;
+  outline-offset: -2px;
+}
+
+.tile.tile-flagged .metric:first-child {
+  color: #d1242f;
+  font-weight: 600;
+}
+
+/* Tag filter -------------------------------------------------------------- */
+.tag-filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: #fafbfc;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.tag-filter-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+
+.tag-filter-select {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  padding: 4px 6px;
+}
+
+.tag-filter-delete {
+  flex: none;
+  font-size: 12px;
+  padding: 3px 10px;
+  cursor: pointer;
+  color: var(--error-text);
+  border: 1px solid var(--error-border);
+  background: var(--error-bg);
+  border-radius: 4px;
+}
+
+/* Bulk tag bar (search results) ------------------------------------------ */
+.bulk-tag-bar {
+  display: flex;
+  gap: 6px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.bulk-tag-bar input {
+  flex: 1;
+  font-size: 12px;
+  padding: 3px 6px;
+}
+
+.bulk-tag-bar button {
+  font-size: 12px;
+  padding: 3px 10px;
+  cursor: pointer;
+}
+
+/* Gallery bulk-tag bar: same base as the results one, plus a leading count and
+   a subtle Clear button. Aligns its items so the count sits with the input. */
+.gallery-bulk {
+  align-items: center;
+}
+
+.gallery-bulk-count {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.gallery-bulk-clear {
+  color: var(--muted);
+}
+
+/* Per-part tag editor (properties area) ---------------------------------- */
+.tag-editor {
+  margin-top: 8px;
+}
+
+.tag-editor-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 4px;
+}
+
+.tag-editor-hint {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.tag-editor-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+/* An editable tag chip: its text plus a remove (x) button. Reuses the .tag
+   look from the tiles, with room for the button. */
+.tag-editor-chips .tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 4px 1px 8px;
+}
+
+.tag-remove {
+  border: none;
+  background: transparent;
+  padding: 0 2px;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  color: var(--muted);
+}
+
+.tag-remove:hover {
+  color: var(--error-text);
+}
+
+.tag-editor-add {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.tag-editor-add input {
+  flex: 1;
+  font-size: 12px;
+  padding: 3px 6px;
+}
+
+.tag-editor-add button {
+  font-size: 12px;
+  padding: 3px 10px;
+  cursor: pointer;
+}
+
+/* Conflict / error / info line under the editor. */
+.tag-editor-message {
+  margin-top: 6px;
+  font-size: 12px;
+}
+
+.tag-editor-message.info {
+  color: var(--muted);
+}
+
+.tag-editor-message.error {
+  color: var(--error-text);
+}
+
+/* Viewer ------------------------------------------------------------------ */
+.viewer-host {
+  position: absolute;
+  inset: 0;
+  /* @ts3d-hoops/ui-kit components (the toolbar buttons, the model tree) size
+     and color themselves from these CSS custom properties, falling back to
+     dark-on-transparent defaults (e.g. --hoops-neutral-foreground: #303030)
+     meant for a light host page. Overridden here to the light-on-dark
+     palette already used elsewhere in this viewer (.map-legend etc.) --
+     unset, the icons and tree text read as barely-visible dark grey against
+     the toolbar/tree panels' dark background. See the ui-kit README's
+     "Theming" section for the full set of variables components read.  */
+  --hoops-neutral-foreground: #f4f5f7;
+  --hoops-neutral-foreground-active: #ffffff;
+  --hoops-neutral-background-hover: rgba(255, 255, 255, 0.14);
+  --hoops-icon-color: #f4f5f7;
+  --hoops-svg-fill-color: #f4f5f7;
+  --hoops-svg-stroke-color: currentColor;
+  /* <hoops-tree-node> (the model tree's internal row wrapper that renders the
+     expand/collapse chevron -- distinct from <hoops-model-tree-node>, which
+     renders the cube icon/label/eye toggle and already reads
+     --hoops-neutral-foreground above) colors its own .node element from a
+     DIFFERENT, undocumented variable: --hoops-neutral-foreground-rest. Left
+     unset, its fallback (a near-black color-mix()) applies regardless of the
+     variables above, which is why the label text/cube/eye icon were already
+     legible but the chevron stayed dark. Confirmed by reading the ui-kit
+     tree-node source (hoops-tree-node.js / hoops-list-element.js, the only
+     two consumers of this variable). */
+  --hoops-neutral-foreground-rest: #f4f5f7;
+  /* The model tree's collapsed-state expand/collapse chevron (unlike its
+     expanded-state one, which reads --hoops-svg-stroke-color via the
+     currentColor chain above) ships with no fill attribute at all, so it
+     never reads any custom property and is stuck at the SVG default (black)
+     -- confirmed by reading the ui-kit tree icon source. A plain inherited
+     `fill` here (not just the custom property above) is what that icon
+     actually picks up, since CSS `fill` inherits through shadow DOM the same
+     way `color` does. */
+  fill: var(--hoops-svg-fill-color);
+  /* Dropdown menus (Camera, Draw mode, ...) default to a near-white
+     background (#fcfcfc) meant to go with the dark neutral-foreground text
+     these components normally use; with that text recoloured light above,
+     the unstyled dropdown became light text on a near-white background.
+     Colored to match --hoops-background below (#262b33, the same lighter
+     grey used by .part-tools/.part-cutting in styles.css) rather than the
+     docked tree panel's darker shade -- a dropdown opened while the tree
+     panel is visible behind it was unreadable when both were the same
+     near-black. */
+  --hoops-dropdown-background-color: #262b33;
+  --hoops-dropdown-menu-border-color: rgba(255, 255, 255, 0.25);
+  /* The Tools panel's accordion groups (Selection/Measurement/Redline/Markup)
+     and the cutting-plane section rows were unreadable/unusable despite the
+     variables above: <hoops-accordion>'s content panel and header, and the
+     tools-panel groups' own list backgrounds, are colored from a SEPARATE set
+     of undocumented variables (--hoops-background, --hoops-foreground,
+     --hoops-neutral-background-50/-20, --hoops-neutral-foreground-20) that
+     default to a light card look (near-white backgrounds, #303030 text) --
+     confirmed by reading accordion.js and the four hoops-tools-*-group.js
+     files. Left unset, our light icon/text colors above landed on that
+     light background too, so everything appeared blank rather than simply
+     dark-on-dark: light-on-light, not a missing icon. */
+  --hoops-background: #262b33;
+  --hoops-foreground: #f4f5f7;
+  --hoops-neutral-background: #262b33;
+  --hoops-neutral-background-20: #2e343d;
+  --hoops-neutral-background-50: #363c46;
+  --hoops-neutral-foreground-20: rgba(255, 255, 255, 0.2);
+  --hoops-neutral-border: rgba(255, 255, 255, 0.15);
+}
+
+/* <hoops-web-viewer-context-manager> has no shadow root (createRenderRoot()
+   returns itself) and no default sizing, so it must be sized explicitly or
+   it collapses to zero height and hides everything inside it, including the
+   <hoops-web-viewer> itself. */
+.viewer-host hoops-web-viewer-context-manager {
+  position: absolute;
+  inset: 0;
+  display: block;
+}
+
+.viewer-host hoops-web-viewer {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.viewer-message {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 24px;
+  color: #d7dae0;
+  font-size: 14px;
+  line-height: 1.5;
+  pointer-events: none;
+}
+
+.viewer-message.error {
+  color: #ffd7d5;
+}
+
+/* Single-part viewer toolbar (model tree/home/camera/drawmode/explode/tools/
+   snapshot). <hoops-web-viewer> has no named <slot>s, so these render as
+   siblings of it (positioned here), not as slotted children -- see
+   buildViewer() in viewer.js. A full-height rail flush against the left
+   edge, matching the reference HOOPS demo app's layout, with the model-tree
+   and tools panels docking immediately to its right (see .part-tree/
+   .part-tools below) rather than floating over the canvas. The Map/Exit map
+   button (.viewer-controls in index.html) stays top-right in both
+   single-part and map mode so the two never overlap.
+   z-index is higher than .part-tree/.map-legend below: the Camera/Draw mode
+   buttons open a dropdown that is a normal (non-portalled) descendant of
+   this container, so it is confined to this container's own stacking
+   context -- it cannot rise above a *sibling* like .part-tree/.map-legend
+   unless this container itself outranks them, regardless of the dropdown's
+   own --hoops-dropdown-z-index. */
+.part-toolbar {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: var(--viewer-rail-width);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 8px 4px;
+  gap: 4px;
+  background: rgba(20, 24, 30, 0.85);
+  border-right: 1px solid rgba(255, 255, 255, 0.2);
+  z-index: 3;
+}
+
+/* The model tree, Cutting Planes, and Tools panels share one docked slot
+   immediately right of the rail -- only one is open at a time, toggled by
+   their respective rail buttons (see wireSidePanelButtons() in viewer.js).
+   The tree keeps the darkest shade (it is the "base" docked panel); Cutting
+   Planes/Tools use the same lighter grey as the Camera/Draw-mode dropdowns
+   below, since both are floating-menu-style panels layered on top -- with
+   the same color as the tree they were unreadable where the two overlapped
+   (e.g. opening a dropdown while the tree panel is open). */
+.part-tree {
+  position: absolute;
+  inset: 0 auto 0 var(--viewer-rail-width);
+  width: 300px;
+  overflow-y: auto;
+  background: rgba(20, 24, 30, 0.95);
+  border-right: 1px solid rgba(255, 255, 255, 0.2);
+  z-index: 2;
+}
+
+.part-tools,
+.part-cutting {
+  position: absolute;
+  inset: 0 auto 0 var(--viewer-rail-width);
+  width: 300px;
+  overflow-y: auto;
+  background: rgba(38, 43, 51, 0.95);
+  border-right: 1px solid rgba(255, 255, 255, 0.2);
+  z-index: 2;
+}
+
+/* The cutting-plane icons (axis/face/custom-plane glyphs in the "+" dropdown,
+   the section toggle glyph, the per-plane row icon) are single flat-color
+   shapes with no darker outline layer of their own -- unlike most icons in
+   this app, their entire visible color IS whatever --hoops-svg-fill-color/
+   --hoops-svg-stroke-color resolve to (confirmed by reading their SVG defs
+   in icons.js: a single <path fill="var(--hoops-svg-fill-color, #f0f0f0)">,
+   no second layer). They were designed to read as a soft, muted grey against
+   the reference demo's near-white page background; forced to the same near-
+   white value we use elsewhere for contrast against our dark panels, they
+   instead look blown out. Scoped to just this panel and its rail button (not
+   the global variables) so the rest of the app -- which does need that
+   brighter value for contrast -- is unaffected. */
+.part-cutting,
+.part-toolbar [data-toolbar-key='cutting-planes'] {
+  --hoops-svg-fill-color: #aab0ba;
+  --hoops-svg-stroke-color: #aab0ba;
+}
+
+/* Shape Map controls: a small toolbar overlaid on the top-right of the
+   viewer (top-left is the .part-toolbar rail -- see above), plus a legend
+   docked to its right. */
+.viewer-controls {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  z-index: 2;
+}
+
+/* Name of the model open in the viewer, overlaid at the top-centre. The left
+   edge is taken by the toolbar rail and, when open, the model tree, and the
+   top-right by the map controls, so the centre is the one strip that stays
+   clear. Truncated so a long file name never spans the canvas. */
+.viewer-title {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: 50%;
+  padding: 6px 12px;
+  font-size: 13px;
+  color: #f4f5f7;
+  background: rgba(20, 24, 30, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  z-index: 2;
+}
+
+.map-button {
+  padding: 6px 12px;
+  font-size: 13px;
+  color: #f4f5f7;
+  background: rgba(20, 24, 30, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.map-button:not(:disabled):hover {
+  background: rgba(40, 46, 54, 0.9);
+}
+
+/* A map button that does not apply right now. Same treatment as the legend's
+   own buttons: dimmed rather than restyled, so the inline icon (which strokes
+   in currentColor) and the border fade with the text. */
+.map-button:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
+.map-colorby {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  font-size: 12px;
+  color: #f4f5f7;
+  background: rgba(20, 24, 30, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 4px;
+}
+
+/* A disabled control (e.g. the cluster count in tag colouring) stays in place
+   but is visibly greyed out so it reads as "unavailable here", not removed. */
+.map-colorby select:disabled,
+.map-colorby input:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* Top-centre, in the same livery as .viewer-title, but one row BELOW the map's
+   control strip. It used to share that strip's 12px top: the map hides
+   .viewer-title, so the spot read as free -- until .viewer-controls grew wide
+   enough to reach the middle (the Layout selector was the one that did it) and
+   hid the badge behind it. 56px clears a 12px-top row of .map-button /
+   .map-colorby controls (about 30px tall) with room to spare, and keeps
+   clearing it if another control is added later.
+
+   Still outside .viewer-controls on purpose -- in that right-aligned row it
+   shifted every control sideways each time a rebuild started. */
+.map-progress {
+  position: absolute;
+  top: 56px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  color: #f4f5f7;
+  background: rgba(20, 24, 30, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 4px;
+  z-index: 2;
+}
+
+/* Small hourglass/spinner shown while the map is (re)building. The first build
+   projects and clusters the whole corpus and can take seconds, so this signals
+   that work is in progress rather than leaving the toolbar looking idle. */
+.map-spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  border-top-color: #f4f5f7;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+/* Top-left, below the toolbar -- the same spot .part-tree occupies in
+   showPart(); map mode has no model tree, so the legend takes that place
+   instead of its previous bottom-left corner. */
+/* Docks right of the (vertical) map toolbar rail, the same spot .part-tree/
+   .part-tools occupy in showPart() -- see the rail comment above. */
+.map-legend {
+  position: absolute;
+  inset: 0 auto 0 var(--viewer-rail-width);
+  width: 300px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 8px 12px;
+  font-size: 12px;
+  color: #f4f5f7;
+  background: rgba(20, 24, 30, 0.9);
+  border-right: 1px solid rgba(255, 255, 255, 0.2);
+  z-index: 2;
+}
+
+/* Only the title and the rows scroll; the breadcrumbs stay pinned above them so
+   the way back out of a drill-down is reachable at any cluster count. */
+.map-legend-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.map-legend-title {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.map-legend-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+/* Hover preview: this row's category is the only one on screen. */
+.map-legend-row-peek {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 3px;
+}
+
+/* The row covering the part last clicked in the viewer. Deliberately unlike
+   .map-legend-row-peek (a background wash): a row can be both the hovered one
+   and the clicked one at once, and the bar on the left edge still reads
+   through the wash. Applies to legend rows and tree rows alike. */
+.map-row-revealed {
+  box-shadow: inset 2px 0 0 0 rgba(120, 200, 255, 0.95);
+  background: rgba(120, 200, 255, 0.1);
+  border-radius: 3px;
+}
+
+/* This row's category is pinned: every one of its parts is on screen as a
+   model, on top of the ordinary representative spread. A bar on the RIGHT
+   edge, in amber -- .map-legend-row-peek is a white background wash that comes
+   and goes with the pointer, and the two have to be told apart at a glance
+   while several rows are pinned at once. Applies to legend rows and tree rows
+   alike, as .map-row-revealed does, and sits on the opposite edge from it so a
+   row can carry both. */
+.map-row-pinned {
+  box-shadow: inset -3px 0 0 0 rgba(255, 185, 80, 0.95);
+  border-radius: 3px;
+}
+
+/* Pinned, but left out of the last selection because the model budget was
+   already full. Hollow rather than solid: the pin is remembered and will take
+   effect as soon as room is made, but nothing of it is on screen now. The row
+   carries a title saying so. */
+.map-row-pinned-dropped {
+  box-shadow: inset -3px 0 0 0 rgba(255, 185, 80, 0.35);
+  border-radius: 3px;
+  opacity: 0.75;
+}
+
+.map-legend-check {
+  flex: none;
+  margin: 0;
+  cursor: pointer;
+}
+
+.map-legend-swatch {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+}
+
+.map-legend-label {
+  flex: 1;
+}
+
+.map-legend-count {
+  color: #b7bcc4;
+}
+
+/* Cohesion readout: quieter than the count next to it, since it is a diagnostic
+   for deciding where to drill rather than part of the row's identity. Kept on
+   one line -- it is now four decimals, and a number broken across two lines
+   reads as two numbers. The width it takes comes out of .map-row-centre, the
+   one part of the row that is allowed to be cut short. */
+.map-legend-cohesion {
+  color: #8b929c;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Readout for the Outliers slider ("Off" or a 2-decimal threshold). */
+#map-outliers {
+  width: 100%;
+}
+
+.map-outliers-value {
+  min-width: 2.2em;
+  color: #b7bcc4;
+  font-variant-numeric: tabular-nums;
+}
+
+/* One line of map-wide figures above the legend's rows. Outside the scrolling
+   row list, because it describes the whole map rather than any row of it. */
+.map-legend-summary {
+  font-size: 10px;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+/* The Order select above the legend's rows. Sits with the summary, outside the
+   scrolling row list, because it applies to the whole list. */
+.map-legend-order {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.map-legend-order label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.map-legend-order select {
+  font-size: 10px;
+  padding: 1px 2px;
+}
+
+/* Drill-down breadcrumb above the legend: "All (10230) > C4 (862) > ...".
+   Wraps rather than scrolling, since the rail is narrow and the trail is
+   short. */
+.map-crumbs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  margin-bottom: 6px;
+  font-size: 11px;
+  color: #b7bcc4;
+}
+
+.map-crumb {
+  font: inherit;
+  color: #8ab4f8;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+.map-crumb:disabled {
+  color: #f4f5f7;
+  cursor: default;
+}
+
+.map-crumb-sep {
+  color: #6b7280;
+}
+
+/* Two-part comparison overlay (demo 1). Bottom-left of the viewer so it does
+   not collide with the map controls (top-right) or legend (left rail). */
+.compare-panel {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  width: 280px;
+  padding: 12px 14px;
+  font-size: 12px;
+  color: #f4f5f7;
+  background: rgba(20, 24, 30, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 6px;
+  z-index: 2;
+}
+
+.compare-score-label {
+  font-size: 12px;
+  color: #b7bcc4;
+}
+
+.compare-score {
+  font-size: 40px;
+  font-weight: 700;
+  line-height: 1.1;
+  margin: 2px 0 10px;
+}
+
+.compare-legend-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.compare-legend-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.compare-legend-swatch {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+}
+
+.compare-legend-check {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  cursor: pointer;
+}
+
+.compare-legend-label {
+  flex: 1;
+}
+
+.compare-note {
+  margin: 10px 0;
+  color: #b7bcc4;
+  line-height: 1.4;
+}
+
+.compare-toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+/* Close (X) in the panel corner, and the full-width "Close comparison" button:
+   both end the comparison, dropping the added part and returning to the base
+   model alone. */
+.compare-close-x {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  font-size: 18px;
+  line-height: 1;
+  color: #d7dae0;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.compare-close-x:hover {
+  background: rgba(255, 255, 255, 0.15);
+  color: #fff;
+}
+
+.compare-close {
+  margin-top: 12px;
+  width: 100%;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: #f4f5f7;
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.compare-close:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.text-button {
+  margin: 8px 6px 8px 0;
+  padding: 4px 10px;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.text-button:hover {
+  background: var(--bg);
+}
+
+/* Danger variant for the property panel's "Delete" button (remove the part from
+   the index). Coloured red so a destructive, irreversible action is visually
+   distinct from the neutral Compare button next to it. */
+.text-button-danger {
+  color: #b3261e;
+  border-color: #e0b4b0;
+}
+
+.text-button-danger:hover {
+  background: #fbeceb;
+  border-color: #b3261e;
+}
+
+/* Thumbnail of a part picked on the map (shown in the info panel). */
+.part-thumb {
+  display: block;
+  width: 100%;
+  max-width: 160px;
+  margin-bottom: 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: #fff;
+}
+
+/* Property-panel close button. Absolutely positioned in the panel's top-right
+   corner so it never adds height -- the info panel sits above the gallery and
+   results, and growing it would push those out of view. The info panel is the
+   positioning context. */
+.info-close {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--muted, #666);
+  font-size: 18px;
+  line-height: 20px;
+  cursor: pointer;
+  border-radius: 4px;
+  z-index: 1;
+}
+
+.info-close:hover {
+  background: rgba(0, 0, 0, 0.06);
+  color: inherit;
+}
+
+/* Error banner -------------------------------------------------------------
+   Deliberately NOT a fixed overlay. It used to be `position: fixed; top: 0`
+   with a z-index above everything, which covered the header and the index
+   picker underneath it -- the controls a user reaches for to recover from the
+   very error being reported. As a normal flex item at the top of the body's
+   column it pushes the rest of the app down by exactly its own height, so
+   nothing is ever hidden and no compensating padding has to be maintained. */
+.error-banner {
+  flex: none;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  position: relative;
+  padding: 8px 16px;
+  background: var(--error-bg);
+  border-bottom: 1px solid var(--error-border);
+  color: var(--error-text);
+  font-size: 13px;
+}
+
+.error-banner-text {
+  flex: 1;
+  min-width: 0;
+}
+
+/* The close button reuses the property panel's button (.info-close) for an
+   identical look and hover, but sits IN the flex row rather than absolutely in
+   the corner, so a long message wraps beside it instead of underneath it.
+   Inherit the banner's error colour so the x does not read as muted grey. */
+.error-banner-close {
+  position: static;
+  flex: none;
+  color: inherit;
+}
+
+/* Loading overlay --------------------------------------------------------- */
+.loading-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.5);
+}
+
+.spinner {
+  width: 36px;
+  height: 36px;
+  border: 4px solid rgba(9, 105, 218, 0.25);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* -- Registration workspace ---------------------------------------------- */
+
+/* "Register files...": opens the bulk-registration modal. The primary of the
+   two registration actions, so it keeps the filled accent style. It sits at
+   the right end of .index-register-bar (margin-left: auto) so it holds the same
+   place whether or not "Register open file" is showing beside it. */
+.register-open {
+  margin-left: auto;
+  font-size: 12px;
+  padding: 5px 12px;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--accent);
+  color: #fff;
+}
+
+.register-open:disabled {
+  background: var(--panel);
+  color: var(--muted);
+  cursor: default;
+}
+
+/* "Register open file": the secondary action, shown only while an unindexed
+   file is open in the viewer. Outlined rather than filled so the two buttons
+   on the row are told apart at a glance. */
+.register-current {
+  font-size: 12px;
+  padding: 5px 10px;
+  cursor: pointer;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  background: var(--panel);
+  color: var(--accent);
+}
+
+/* Modal overlay + dialog. */
+.register-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 40px 16px;
+  z-index: 1000;
+  overflow: auto;
+}
+
+.register-dialog {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  width: 640px;
+  max-width: 100%;
+  padding: 16px 20px 20px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25);
+}
+
+.register-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 10px;
+  margin-bottom: 12px;
+}
+
+.register-title {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.register-index {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.register-close {
+  margin-left: auto;
+  border: none;
+  background: none;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  color: var(--muted);
+}
+
+.register-drop {
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  padding: 14px;
+  text-align: center;
+}
+
+.register-drop.is-drag {
+  border-color: var(--accent);
+  background: #f0f6ff;
+}
+
+.register-drop-label {
+  margin: 0 0 10px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.register-pick-row {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+}
+
+.register-pick-row button {
+  font-size: 12px;
+  padding: 5px 12px;
+  cursor: pointer;
+}
+
+.register-selection {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.register-options {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  margin: 14px 0 4px;
+}
+
+.register-options label {
+  display: flex;
+  flex-direction: column;
+  font-size: 11px;
+  color: var(--muted);
+  gap: 3px;
+}
+
+.register-options input {
+  width: 90px;
+  font-size: 12px;
+  padding: 4px 6px;
+}
+
+.register-submit {
+  margin-left: auto;
+  font-size: 12px;
+  padding: 6px 14px;
+  cursor: pointer;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  background: var(--accent);
+  color: #fff;
+}
+
+.register-submit:disabled {
+  background: var(--panel);
+  color: var(--muted);
+  border-color: var(--border);
+  cursor: default;
+}
+
+.register-phase {
+  font-size: 12px;
+  color: var(--muted);
+  min-height: 16px;
+  margin: 8px 0;
+}
+
+.register-phase.is-error {
+  color: var(--error-text);
+}
+
+.register-progress {
+  margin: 8px 0;
+}
+
+.register-bar {
+  height: 8px;
+  border-radius: 4px;
+  background: var(--bg);
+  overflow: hidden;
+  border: 1px solid var(--border);
+  position: relative;
+}
+
+.register-bar-fill {
+  height: 100%;
+  width: 0;
+  background: var(--accent);
+  transition: width 0.2s ease;
+}
+
+/* Steps that cannot report a percentage (exists check, queuing, a job that
+   has not started embedding) sweep a stripe across the whole track so they
+   read as "working" rather than "stuck", while the solid fill still shows any
+   progress accumulated so far. */
+.register-progress.is-indeterminate .register-bar::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  width: 35%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  opacity: 0.65;
+  animation: register-bar-indeterminate 1.1s ease-in-out infinite;
+}
+
+@keyframes register-bar-indeterminate {
+  0% { transform: translateX(-120%); }
+  100% { transform: translateX(320%); }
+}
+
+.register-progress-text {
+  font-size: 12px;
+  color: var(--text);
+  margin: 6px 0;
+}
+
+.register-cancel {
+  font-size: 12px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+.register-result {
+  margin-top: 10px;
+}
+
+.register-summary {
+  font-size: 12px;
+  font-weight: 500;
+  margin-bottom: 8px;
+}
+
+.register-result-actions {
+  margin-bottom: 8px;
+}
+
+.register-result-actions button {
+  font-size: 12px;
+  padding: 5px 12px;
+  cursor: pointer;
+}
+
+.register-report {
+  max-height: 220px;
+  overflow: auto;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px 10px;
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+}
+
+.register-jobs {
+  margin-top: 16px;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+
+.register-jobs-title {
+  font-size: 13px;
+  font-weight: 600;
+  margin: 0 0 8px;
+}
+
+.register-jobs-list {
+  font-size: 12px;
+}
+
+.register-job-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--bg);
+}
+
+.register-job-label {
+  flex: 1;
+}
+
+.register-job-time {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.register-job-row button {
+  font-size: 11px;
+  padding: 3px 8px;
+  cursor: pointer;
+}
+
+/* -- Create-index dialog -------------------------------------------------- */
+
+.index-create-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 60px 16px;
+  z-index: 1000;
+  overflow: auto;
+}
+
+.index-create-dialog {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  width: 400px;
+  max-width: 100%;
+  padding: 16px 20px 20px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25);
+}
+
+.index-create-head {
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 10px;
+  margin-bottom: 12px;
+}
+
+.index-create-title {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.index-create-close {
+  margin-left: auto;
+  border: none;
+  background: none;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  color: var(--muted);
+}
+
+.index-create-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.index-create-field input {
+  font-size: 13px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.index-create-hint {
+  font-size: 11px;
+  color: var(--muted);
+  margin: 8px 0 0;
+}
+
+.index-create-error {
+  font-size: 12px;
+  color: var(--error-text);
+  margin-top: 10px;
+}
+
+.index-create-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.index-create-actions button {
+  font-size: 12px;
+  padding: 6px 14px;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--panel);
+  color: var(--text);
+}
+
+.index-create-actions .index-create-submit {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+
+.index-create-actions .index-create-submit:disabled {
+  background: var(--panel);
+  color: var(--muted);
+  border-color: var(--border);
+  cursor: default;
+}
+
+/* -- Tag picker ----------------------------------------------------------- */
+/* The one tag-writing control, in its two shapes. The body (count, field,
+   button, result line) is styled once; `inline` and `popover` only differ in
+   what surrounds it. The modal that used to ask for a tag name lived here;
+   it was replaced by the popover, which keeps the row that was clicked in
+   view instead of covering the panel it belongs to. */
+
+.tag-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* The number of parts about to be written. Not a muted aside: it is the only
+   thing between a stray click and an index-wide write. */
+.tag-picker-target {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.tag-picker-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tag-picker-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12px;
+  padding: 3px 6px;
+}
+
+.tag-picker-apply {
+  font-size: 12px;
+  padding: 3px 10px;
+  cursor: pointer;
+}
+
+.tag-picker-status {
+  color: var(--text);
+}
+
+.tag-picker-status:empty {
+  display: none;
+}
+
+/* Inline: the bar sits inside a tab, under the controls it belongs to, and
+   borrows their padding so the tab reads as one block. */
+.tag-picker-inline {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+/* Popover: a small panel next to whatever was clicked. Above the viewer and
+   the row menus, below the modals. */
+.tag-popover {
+  position: fixed;
+  z-index: 900;
+  width: 320px;
+  max-width: calc(100vw - 16px);
+  padding: 10px 12px 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+}
+
+.tag-popover-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 8px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.tag-popover-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.tag-popover-close {
+  margin-left: auto;
+  border: none;
+  background: none;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  color: var(--muted);
+}
+
+/* Colour bar for the Shape Map heat map: the gradient the overlaid models are
+   painted with, plus the real cosine-similarity values at its ends. Bottom
+   right, because the top-centre is the model title, the top-right the map
+   controls and the left the toolbar rail. Same dark translucent chrome as
+   .viewer-title so the two overlays read as one family. */
+.map-heat-bar {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 10px;
+  color: #f4f5f7;
+  background: rgba(20, 24, 30, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 4px;
+  z-index: 2;
+}
+
+/* Blue at the bottom (least similar) to red at the top, matching heatColor(). */
+.map-heat-gradient {
+  width: 14px;
+  height: 120px;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 2px;
+  background: linear-gradient(to top, rgb(0, 0, 255), rgb(0, 255, 0), rgb(255, 0, 0));
+}
+
+.map-heat-label {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.map-heat-caption {
+  max-width: 220px;
+  font-size: 11px;
+  color: var(--muted);
+  text-align: center;
+}
+/* The clustering controls, hosted by the legend panel rather than the toolbar
+   above it: they decide what the legend's categories are, so they belong next
+   to them. The panel is a column, and these take their natural height at the
+   top of it while the row list below takes the rest. */
+.map-legend-controls {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+
+/* One control: its label and its input on a single line. The rail is narrow,
+   so the rows stack rather than sitting side by side as they did on the
+   toolbar. */
+.map-legend-control {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+}
+
+/* The Part name box. An id rather than a new class: it is one control with one
+   sizing problem -- the browser's default input width overflows this narrow
+   rail -- and nothing else shares it. */
+#map-findpart-wrap {
+  align-self: stretch;
+  flex-direction: column;
+  align-items: stretch;
+}
+
+#map-findpart {
+  flex: 1 1 auto;
+  min-width: 0;
+  font: inherit;
+}
+
+/* What the last search found, under the box. Colour comes from the panel
+   (inherit + opacity), never from var(--text): that token is the light
+   theme's, and this rail is dark. Gone entirely when empty, so the control
+   keeps its height until there is something to say. */
+#map-findpart-status {
+  font-size: 10px;
+  line-height: 1.2;
+  color: inherit;
+  opacity: 0.78;
+}
+
+#map-findpart-status:empty {
+  display: none;
+}
+
+/* The candidate list. Ids and element selectors only -- it is one control, and
+   a class would suggest it is reusable. Colour comes from the panel, never
+   from var(--text): that token is the light theme's and this rail is dark.
+   Stretched like #map-findpart-wrap above: .map-legend-controls aligns its
+   children to flex-start, so without this the list is only as wide as its
+   longest line and leaves half the rail unused. Five or more candidates fit
+   before it scrolls -- a candidate is two lines, about 29px, and a name like
+   tmcad's 288.stp stands for seven parts. */
+#map-findpart-list {
+  display: flex;
+  flex-direction: column;
+  align-self: stretch;
+  max-height: 168px;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* Two lines per candidate: the file name, then where it sits and its id. The
+   break is a newline in textContent, so no markup is built from data. */
+#map-findpart-list button {
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  font-size: 10px;
+  line-height: 1.25;
+  white-space: pre-line;
+  padding: 2px 4px;
+  background: transparent;
+  border: none;
+  color: inherit;
+  opacity: 0.8;
+  cursor: pointer;
+}
+
+#map-findpart-list button:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+#map-findpart-list button[aria-current="true"] {
+  opacity: 1;
+  font-weight: 600;
+}
+
+/* Everything renderLegend() draws. It is emptied on every rebuild, which is
+   why the controls above are not inside it. Takes the height the controls
+   leave, so the row list inside keeps scrolling as before. */
+.map-legend-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+/* Outliers is the one control that needs room: the useful thresholds are the
+   twenty steps from 0.80 to 0.99, which a slider squeezed in beside its label
+   cannot resolve. It stacks instead, label and readout on one line and the
+   slider on its own at full width. */
+.map-legend-control-stack {
+  align-self: stretch;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+}
+
+.map-legend-control-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+/* Ward's tree. Takes the height the legend's rows used to, and the rows are
+   plain text: the tree is for reading structure, not for picking colours. */
+.map-tree-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  font-size: 11px;
+}
+
+.map-tree-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 2px;
+  white-space: nowrap;
+}
+
+.map-tree-caret {
+  width: 12px;
+  flex: 0 0 auto;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  text-align: center;
+}
+
+/* The rows that ARE the legend's categories: the cut the map is drawn at.
+   Brought forward only -- the swatch and the label already say which row it
+   is, so anything stronger would turn the structure into a decoration. */
+.map-tree-row-cut {
+  font-weight: 600;
+}
+
+/* The centre part's name is the only part of a row that may be cut short:
+   it is the one piece a reader can recover by widening the panel, and
+   letting it shrink is what keeps long rows from scrolling sideways. */
+.map-row-centre {
+  opacity: 0.6;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+/* Right-click menu on a panel row, in the tree and in the legend. Fixed rather
+   than absolute: the rows scroll
+   inside the panel, and a menu anchored to one of them would slide away from
+   the pointer. Colours follow the legend panel it rises from, not the light
+   app menu. */
+.map-row-menu {
+  position: fixed;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  min-width: 160px;
+  padding: 4px;
+  font-size: 12px;
+  color: #f4f5f7;
+  background: rgba(20, 24, 30, 0.97);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+.map-row-menu-item {
+  padding: 6px 8px;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  white-space: nowrap;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.map-row-menu-item:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+/* Shown, not hidden, when the action cannot be run: the reason is in the
+   item's tooltip, and a menu that changed shape would be harder to learn. */
+.map-row-menu-item:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* The Reload button is an icon plus an optional count. */
+#map-untagged-reload {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+/* Catalogue tab ----------------------------------------------------------- */
+/* The Ward frontier as a list of groups. Reuses .gallery-grid for the scroll
+   viewport and .tile for the tiles; only the control row, the stats block and
+   the kind badge colours are new here. */
+/* One row when the panel is wide enough, several when it is not. The panel is
+   resizable and these controls are the widest row in the tab, so a fixed
+   single line put Reload -- the only control that does anything -- off the
+   right edge. Nothing here may be clipped. */
+.catalogue-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--muted);
+  border-bottom: 1px solid var(--border);
+}
+
+/* A label is a poor place to break a line: it would leave its own input on
+   the next row. */
+.catalogue-controls label {
+  white-space: nowrap;
+}
+
+/* Four to six characters is the whole range of these values, so they get a
+   width to match and never grow or shrink into one. */
+.catalogue-controls input[type='number'] {
+  flex: 0 0 auto;
+  width: 58px;
+}
+
+/* The selection row reads as one block with the controls above it, so it
+   shares their padding and borderless look. The tag row below it is the shared
+   tag picker, which brings its own padding and bottom rule -- there is nothing
+   left to style here. */
+.catalogue-select {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.catalogue-note {
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.catalogue-stats {
+  padding: 0 12px 8px;
+  font-size: 11px;
+  color: var(--muted);
+  border-bottom: 1px solid var(--border);
+}
+
+/* Collapsed by default: the full block is thirty rows, and the tiles are what
+   the tab is for. The one line left carries the figures cuts are compared on. */
+.catalogue-stats-summary {
+  padding: 6px 0;
+  cursor: pointer;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.catalogue-stats-body {
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.catalogue-stats .catalogue-stat {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 1px 0;
+}
+
+.catalogue-stats .catalogue-stat-value {
+  font-variant-numeric: tabular-nums;
+}
+
+.catalogue-stats .catalogue-stat-head {
+  margin-top: 6px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+/* The three kinds are told apart by their words first; the colours only repeat
+   what the badge already says. */
+.tile .score-badge.catalogue-confident {
+  background: rgba(26, 127, 55, 0.85);
+}
+
+.tile .score-badge.catalogue-small {
+  background: rgba(154, 103, 0, 0.85);
+}
+
+.tile .score-badge.catalogue-mixed {
+  background: rgba(100, 108, 120, 0.85);
+}
+
+/* Locked while a map build runs: the tree the ticks drive is being replaced.
+   The rule sits on the container so recycled tiles stay locked too. */
+.catalogue-locked .tile-select {
+  pointer-events: none;
+  opacity: 0.5;
+}
+
+/* How far through a group is. Each tile also says this in words, with the
+   counted fraction, so the tint is only a way of seeing it across the grid. */
+.tile.catalogue-untagged {
+  background: transparent;
+}
+
+.tile.catalogue-partial {
+  background: rgba(154, 103, 0, 0.12);
+}
+
+.tile.catalogue-tagged {
+  background: rgba(26, 127, 55, 0.12);
+}

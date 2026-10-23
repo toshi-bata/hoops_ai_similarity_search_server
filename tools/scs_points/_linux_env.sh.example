@@ -1,0 +1,26 @@
+# scs_points - Linux (Ubuntu) build environment.
+#
+# Copy this file to _linux_env.sh (which is git-ignored) and edit the path, then
+# `source` it before building.
+#
+# HVISUALIZE_WEB_INSTALL_DIR points at the root of the HOOPS Visualize Web SDK
+# (the folder that contains authoring/libsc). The Makefile resolves headers and
+# libraries relative to this variable - the same variable name as the Windows
+# _VS2022.bat, so both platforms share one setting.
+export HVISUALIZE_WEB_INSTALL_DIR=/path/to/Communicator/HOOPS_Visualize_Web_2026.2.0
+
+# Usage (plain Makefile, no Qt / no qmake):
+#   cp _linux_env.sh.example _linux_env.sh   # then edit the path above
+#   source _linux_env.sh
+#   make                                     # build-essential only, no Qt
+#
+# The built executable is placed at ../../bin/scs_points (the server's bin/).
+#
+# IMPORTANT: build against the same HOOPS Visualize Web version the web viewer
+# engine is pinned to (web/package.json: @ts3d-hoops/* = 2026.2.0). A newer libsc
+# authors an SCS the 2026.2.0 engine cannot load ("Failed to load the map.").
+#
+# NOTE: Confirmed against 2026.2.0 on Ubuntu: static archives libsc/libsc_utils/
+# libsc_utils_text/libz, no hps_core. The bundled set varies between SDK versions
+# (2026.6.0 also ships libpng16/libpng); override SC_LIBDIR / SC_LIBS in the
+# Makefile if your SDK differs.

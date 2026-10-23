@@ -1,0 +1,6 @@
+# Test-only dependencies. The test suite is SDK-free and needs no HOOPS AI
+# license; these are installed on top of requirements.txt to run
+# `python -m pytest`. numpy is already pulled in transitively by scipy
+# (see requirements.txt).
+pytest
+httpx

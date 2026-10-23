@@ -1,0 +1,647 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>HOOPS AI Similarity Search</title>
+  </head>
+  <body>
+    <!-- Error banner: shared by every screen (see src/ui.js). It is the first
+         item in the body's column layout, so it pushes the header and the rest
+         of the app down instead of covering them, and it can be dismissed with
+         the same close button the property panel uses. -->
+    <div id="error-banner" class="error-banner" role="alert" hidden>
+      <span id="error-banner-text" class="error-banner-text"></span>
+      <button id="error-banner-close" type="button" class="info-close error-banner-close"
+              title="Dismiss" aria-label="Dismiss">&times;</button>
+    </div>
+
+    <header class="app-header">
+      <!-- Top-left menu: open a blank viewer, or upload an arbitrary local
+           CAD file into it (moved here from the search panel to match the
+           reference HOOPS demo app's layout). -->
+      <div class="app-menu">
+        <button
+          id="app-menu-button"
+          type="button"
+          class="app-menu-button"
+          aria-haspopup="true"
+          aria-expanded="false"
+          title="Menu"
+        >
+          <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true">
+            <circle cx="4" cy="4" r="1.6" fill="currentColor" />
+            <circle cx="10" cy="4" r="1.6" fill="currentColor" />
+            <circle cx="16" cy="4" r="1.6" fill="currentColor" />
+            <circle cx="4" cy="10" r="1.6" fill="currentColor" />
+            <circle cx="10" cy="10" r="1.6" fill="currentColor" />
+            <circle cx="16" cy="10" r="1.6" fill="currentColor" />
+            <circle cx="4" cy="16" r="1.6" fill="currentColor" />
+            <circle cx="10" cy="16" r="1.6" fill="currentColor" />
+            <circle cx="16" cy="16" r="1.6" fill="currentColor" />
+          </svg>
+        </button>
+        <div id="app-menu-popup" class="app-menu-popup" hidden>
+          <button id="menu-open-empty" type="button" class="app-menu-item">Open Empty Viewer</button>
+          <button id="menu-open-file" type="button" class="app-menu-item">Open local file&hellip;</button>
+          <button id="menu-add-compare" type="button" class="app-menu-item">Add local file to compare&hellip;</button>
+          <input id="query-file" type="file" hidden />
+          <input id="add-compare-file" type="file" hidden />
+        </div>
+      </div>
+      <h1 class="app-title">HOOPS AI Similarity Search</h1>
+    </header>
+
+    <main class="app-main">
+      <!-- The 3D viewer sits on the left and fills the remaining space; the
+           gallery panel is a fixed-width, resizable column on the right (like
+           the desktop sandbox). -->
+      <section class="viewer-pane">
+        <div id="viewer-host" class="viewer-host"></div>
+        <div id="viewer-message" class="viewer-message">
+          Double-click a part on the right, or open a file, to view it in 3D.
+        </div>
+
+        <!-- Friendly name of the model currently open in the viewer, overlaid at
+             the top-left so the part's identity sits on the model itself. The
+             tree's top node shows the storage id (the part is imported under its
+             file id), which is unreadable, so the app supplies the known file
+             name here instead. Set for every open path; hidden when the viewer
+             holds no model (empty, map, or comparison). -->
+        <div id="viewer-title" class="viewer-title" hidden></div>
+
+        <!-- "Building map..." while the server re-projects. Deliberately NOT a
+             child of .viewer-controls: that toolbar is right-aligned, so a
+             message appearing at its end pushed every control sideways. It sits
+             top-centre instead, where #viewer-title would be -- and the map
+             clears that overlay (enterMapMode() calls setViewerTitle(null)), so
+             the two never share the strip. -->
+        <span id="map-progress" class="map-progress" hidden>
+          <span class="map-spinner" aria-hidden="true"></span>
+          Building map&hellip;
+        </span>
+
+        <!-- Shape Map controls, overlaid on the viewer. "Map" replaces the
+             viewer content with the index's point cloud. One button does all
+             three jobs -- open, return, leave -- because the map keeps its
+             settings: from a part opened out of the map it goes back to the
+             map as it was, and only from the map itself does it leave. The
+             colour switch and legend appear only in map mode. -->
+        <div class="viewer-controls">
+          <button id="map-toggle" type="button" class="map-button">Map</button>
+          <label id="map-kind-wrap" class="map-colorby" hidden>
+            Show
+            <select id="map-kind">
+              <option value="part" selected>Parts</option>
+              <option value="assembly">Assemblies</option>
+              <option value="any">All</option>
+            </select>
+          </label>
+          <label id="map-colorby-wrap" class="map-colorby" hidden>
+            Colour by
+            <select id="map-colorby">
+              <option value="cluster">Cluster</option>
+              <option value="tag">Tag</option>
+            </select>
+          </label>
+          <!-- How the 2,048-dimensional vectors are reduced to the three the map
+               draws. Changing it re-projects on the server, so it is locked
+               while a build is running. UMAP is added to this list by main.js
+               from /client-config (umap_available); the whole control is hidden
+               when the server does not offer it, since with only one layout
+               there is nothing to choose between. -->
+          <label id="map-projection-wrap" class="map-colorby" hidden
+                 title="How the map's three dimensions are derived. PCA is linear and reproducible; UMAP separates families more clearly but its layout is not stable across different file sets. The clustering is the same either way -- k-means runs on the full vectors, not on these three.">
+            Layout
+            <select id="map-projection">
+              <option value="pca" selected>PCA</option>
+              <option value="umap">UMAP</option>
+            </select>
+          </label>
+          <!-- How the parts are grouped. Unlike Layout this does not move any
+               point: k-means and Ward both run on the full-dimensional vectors
+               and only decide which cluster a part belongs to. Ward is
+               hierarchical, so a larger k subdivides the clusters a smaller k
+               produced instead of replacing them. -->
+          <label id="map-clustering-wrap" class="map-colorby" hidden
+                 title="How the parts are grouped. k-means partitions them afresh for every cluster count. Ward builds one tree, so raising the count splits clusters rather than reshuffling them -- its first build takes about 40 seconds on 8,000 parts, after which changing the count is instant.">
+            Clustering
+            <select id="map-clustering">
+              <option value="kmeans" selected>k-means</option>
+              <option value="ward">Ward</option>
+            </select>
+          </label>
+          <label id="map-display-wrap" class="map-colorby" hidden>
+            View
+            <select id="map-display" title="Point cloud (whole index) or 3D models (representatives)">
+              <option value="cloud" selected>Point cloud</option>
+              <option value="models">3D models</option>
+            </select>
+          </label>
+          <label id="map-partscale-wrap" class="map-colorby" hidden title="Size of each 3D model">
+            Scale
+            <input id="map-partscale" type="range" min="-1" max="1" step="0.02" value="0" />
+          </label>
+          <!-- Every model is normally scaled to the same on-screen size, which is
+               what the embedding sees: L2 normalisation discards absolute size and
+               keeps proportion. This draws them at one common scale instead, so
+               their real size ratios show. -->
+          <label id="map-truescale-wrap" class="map-colorby" hidden
+                 title="Draw every model at one common scale so real size ratios show. Off (the default) scales each model to the same on-screen size, matching what the embedding sees.">
+            <input id="map-truescale" type="checkbox" />
+            True scale
+          </label>
+        </div>
+
+        <!-- Legend for the map's colours. Each row is a checkbox that shows or
+             hides that category's node in the point cloud; the colours are baked
+             into the SCS by the server, so the swatches come from /map.
+             The clustering controls live here rather than on the toolbar above,
+             because they describe the legend: they decide what the categories
+             ARE. They are shown only in cluster colouring, which is the only
+             scheme they mean anything in. They sit outside #map-legend-body
+             because renderLegend() empties it on every build. -->
+        <div id="map-legend" class="map-legend" hidden>
+          <div id="map-legend-controls" class="map-legend-controls" hidden>
+            <!-- Find one part in the map by name. The panel lists families, not
+                 parts, so without this a known part can only be found by eye. -->
+            <label id="map-findpart-wrap" class="map-legend-control">
+              <input id="map-findpart" type="search" placeholder="Part name &rarr; Enter"
+                     title="Find a part in this map by file name (or file id) and go to it. Enter, Tab or clicking away searches. Press Enter again to step through parts that share a name." />
+              <!-- Where the search reports itself: how many parts matched and
+                   which row the one on screen was found in. The count is not
+                   optional -- file names are base names only, so two parts in
+                   different folders can share one, and pressing Enter again
+                   steps to the next of them. -->
+              <span id="map-findpart-status" aria-live="polite"></span>
+            </label>
+            <!-- The matches, shown only when there are two or more. In an index
+                 like tmcad many files share a base name -- 288.stp is seven
+                 parts -- so the name alone cannot say which part is meant.
+                 Outside the label above on purpose: a button inside a label
+                 moves focus to the input instead of acting on its own. -->
+            <div id="map-findpart-list" hidden></div>
+            <!-- Swap the overlaid 3D models for the hits of the last similarity
+                 search, on the same point cloud and the same axes, so the k-means
+                 grouping and the search neighbourhood can be read off one picture. -->
+            <label id="map-search-wrap" class="map-legend-control">
+              <input id="map-search" type="checkbox"
+                     title="Overlay the parts found by the last similarity search instead of the per-cluster sample. The point cloud underneath stays coloured by cluster." />
+              Search results
+            </label>
+            <label id="map-clusters-wrap" class="map-legend-control">
+              Clusters (k)
+              <select id="map-clusters" title="Cluster count for the map colouring. FAISS warns when there are fewer than 39 training points per centroid; the default aims at about 32 parts per cluster, so that warning is expected and harmless at the default. Counts much higher than the default leave many tiny clusters.">
+                <option value="1">1</option>
+                <option value="2">2</option>
+                <option value="4">4</option>
+                <option value="6">6</option>
+                <option value="8" selected>8</option>
+                <option value="12">12</option>
+                <option value="16">16</option>
+                <option value="24">24</option>
+                <option value="32">32</option>
+                <option value="48">48</option>
+                <option value="64">64</option>
+                <option value="96">96</option>
+                <option value="128">128</option>
+                <option value="192">192</option>
+                <option value="256">256</option>
+                <option value="512">512</option>
+                <option value="1024">1024</option>
+              </select>
+            </label>
+            <!-- Ward's counterpart to Clusters (k), and shown in its place: the
+                 finest cut its tree descends to. Raising it makes the leaves
+                 smaller and the point cloud slower to bake, so it is a choice
+                 rather than a constant. -->
+            <label id="map-wardmax-wrap" class="map-legend-control" hidden
+                   title="The finest cluster count Ward's tree descends to. A larger value makes the leaves smaller and the hierarchy deeper, and takes longer to bake into the point cloud.">
+              Max clusters
+              <select id="map-wardmax">
+                <option value="128">128</option>
+                <option value="256" selected>256</option>
+                <option value="512">512</option>
+                <option value="1024">1024</option>
+                <option value="2048">2048</option>
+                <option value="4096">4096</option>
+              </select>
+            </label>
+            <!-- Cluster the untagged remainder on its own: tag the clusters that
+                 are obvious, switch this on, and the parts that are left get
+                 fresh centroids of their own. -->
+            <label id="map-untagged-wrap" class="map-legend-control">
+              <input id="map-untagged" type="checkbox"
+                     title="Cluster only the parts that carry no tag yet. Tag the obvious clusters, then re-cluster what is left: the remaining parts get their own centroids and new taggable clusters can appear." />
+              Untagged only
+            </label>
+            <!-- Tagging does not rebuild the map by itself: a re-projection takes
+                 seconds, so several clusters can be tagged in a row and the
+                 rebuild asked for once. The count of parts tagged since the map
+                 was built is shown next to the icon.
+                 Always present, disabled when it does not apply, so the legend
+                 rows below never move. -->
+            <button id="map-untagged-reload" type="button" class="map-button" aria-label="Reload">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                   stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M20 11a8 8 0 0 0-13.7-5.3L3 9" />
+                <path d="M3 4v5h5" />
+                <path d="M4 13a8 8 0 0 0 13.7 5.3L21 15" />
+                <path d="M21 20v-5h-5" />
+              </svg>
+              <span id="map-untagged-reload-count"></span>
+            </button>
+            <label id="map-outliers-wrap" class="map-legend-control map-legend-control-stack">
+              <span class="map-legend-control-head">
+                Outliers
+                <span id="map-outliers-value" class="map-outliers-value">Off</span>
+              </span>
+              <input id="map-outliers" type="range" min="0.79" max="0.99" step="0.01" value="0.79"
+                     title="Split points whose cosine similarity to their cluster's centre falls below this into a separate Outliers group. The lowest position (0.79) means Off; the usable thresholds are 0.80 to 0.99." />
+            </label>
+            <!-- Scanning the legend from the top means hovering a row, finding
+                 where on the map that cluster actually is, zooming in by hand
+                 and hovering again. This does the zoom step: the camera frames
+                 the hovered cluster as soon as the preview fires. It does NOT
+                 move back when the pointer leaves -- so the view can be orbited
+                 after zooming in, and moving down to the next row does not
+                 bounce through the overview. Home returns to the overview. -->
+            <label id="map-zoomhover-wrap" class="map-legend-control">
+              <input id="map-zoomhover" type="checkbox"
+                     title="While the pointer rests on a legend row, move the camera to frame that cluster. The camera stays where it is when the pointer leaves; Home returns to the overview." />
+              Zoom on hover
+            </label>
+          </div>
+          <div id="map-legend-body" class="map-legend-body"></div>
+          <div id="map-tree-body" class="map-tree-body"></div>
+        </div>
+
+        <!-- Two-part comparison overlay (demo 1's "Compare two files..."). Shows
+             one big similarity number, the file-to-colour legend, how the two
+             parts were overlaid, and a switch to toggle the coloured difference.
+             No index is involved. -->
+        <div id="compare-panel" class="compare-panel" hidden>
+          <button id="compare-close-x" type="button" class="compare-close-x"
+                  aria-label="Close comparison" title="Close comparison">&times;</button>
+          <div class="compare-score-label">Shape similarity</div>
+          <div id="compare-score" class="compare-score">&mdash;</div>
+          <div id="compare-legend" class="compare-legend-list"></div>
+          <p class="compare-note">
+            The two parts are overlaid by aligning their bounding-box centres
+            (translation only &mdash; no rotation or scaling, so a real size
+            difference stays visible). Use the checkboxes to show or hide the
+            base and added parts.
+          </p>
+          <label class="compare-toggle-row">
+            <input id="compare-toggle" type="checkbox" checked />
+            Show differences
+          </label>
+          <button id="compare-close" type="button" class="compare-close">
+            Close comparison
+          </button>
+        </div>
+      </section>
+
+      <!-- Drag handle: resize the gallery panel. The gallery adapts its column
+           count to the panel width, so widening it shows more columns. The
+           knob on it collapses the panel entirely, for a full-width viewport
+           (a crowded map, or a screenshot of one). It is a child of the handle
+           rather than a separate control so the two sit in the same 6px strip;
+           main.js keeps its pointerdown from starting a drag. -->
+      <div id="panel-resizer" class="panel-resizer" title="Drag to resize">
+        <button id="panel-toggle" type="button" class="panel-toggle"
+                title="Hide the panel" aria-expanded="true">&rsaquo;</button>
+      </div>
+
+      <!-- Right: query panel + Gallery (browse) or Results (last search). -->
+      <aside class="side-panel">
+        <!-- Index picker: which index the gallery and searches use. Kept inside
+             the panel so the choice sits next to the parts it controls. The
+             admin buttons create a new empty index or delete the selected one. -->
+        <div class="index-bar">
+          <label class="index-picker">
+            Index:
+            <select id="index-select"></select>
+          </label>
+          <div class="index-admin">
+            <button id="index-create" type="button" class="index-admin-button" title="Create a new empty index">New&hellip;</button>
+            <button id="index-delete" type="button" class="index-admin-button index-admin-danger" title="Delete the selected index" disabled>Delete</button>
+          </div>
+        </div>
+
+        <!-- Both ways to put files INTO the current index, on one row directly
+             under the picker they act on. They used to sit far apart -- one in
+             the window header, one inside the search panel -- with labels
+             ("Register..." / "Register to index") that did not say what each
+             one registered.
+             "Register open file"  registers the single file already open in
+                                   the viewer (opened via the menu's "Open
+                                   local file..."). Hidden unless such a file
+                                   is the query and is not indexed yet.
+             "Register files..."   opens the bulk-registration workspace, where
+                                   files or server paths are chosen and a
+                                   registration job is run. Enabled once an
+                                   index is selected. See main.js for both. -->
+        <div class="index-register-bar">
+          <button id="register-current" type="button" class="register-current"
+                  title="Register the file currently open in the viewer into this index"
+                  hidden>Register open file</button>
+          <button id="register-open" type="button" class="register-open"
+                  title="Choose files to register into this index"
+                  disabled>Register files&hellip;</button>
+        </div>
+
+        <!-- Search panel. The search always runs on whatever model is open in
+             the 3D viewer (the "query"), like the desktop sandbox: double-click
+             a part to open it, or open an arbitrary CAD file via the top-left
+             menu's "Open local file..." action. -->
+        <div class="search-panel">
+          <div class="query-options">
+            <div class="search-kind">
+              <label><input type="radio" name="search-kind" value="part" checked /> Part</label>
+              <label><input type="radio" name="search-kind" value="assembly" /> Assembly</label>
+            </div>
+            <button id="search-run" type="button" disabled>Find similar</button>
+            <!-- Estimate: predict production records (material, process, cost,
+                 lead time) from the parts narrowed in the Results tab. Enabled
+                 only after a similarity search; it estimates over exactly the
+                 shown result tiles. -->
+            <button id="estimate-run" type="button" disabled>Estimate</button>
+          </div>
+        </div>
+
+        <div class="mode-toggle">
+          <button id="mode-browse" type="button" class="mode-button">Gallery</button>
+          <button id="mode-search" type="button" class="mode-button">Results</button>
+          <button id="mode-estimate" type="button" class="mode-button">Estimate</button>
+          <!-- Catalogue: the Ward tree cut where each family is tight enough.
+               A fourth list over the same index, so it belongs with the other
+               three rather than on the map toolbar. -->
+          <button id="mode-catalogue" type="button" class="mode-button">Catalogue</button>
+        </div>
+
+        <!-- Gallery: all registered parts (virtual scroll). -->
+        <div id="browse-view" class="pane-view">
+          <!-- Filter: a single combobox (like the desktop sandbox) that narrows
+               the GALLERY listing only -- All, Part, Assembly, Tagged, or one
+               specific tag. It lives inside the Gallery pane (like the Results
+               filter lives inside the Results pane) so both filters sit with
+               the list they control. The similarity search and the shape map
+               deliberately ignore it, so a lingering filter never silently
+               scopes them. -->
+          <div id="tag-filter" class="tag-filter"></div>
+          <!-- Part count for the current index and gallery filter (shown /
+               total). Placed directly under the filter so the effect of a
+               filter is visible right where it is chosen. -->
+          <div id="gallery-status" class="gallery-status"></div>
+          <!-- Bulk tag / untag over the multi-selected tiles (checkboxes). Used
+               to prune or refine an auto-tagged cluster: filter by the tag,
+               tick the parts that do not belong, then remove the tag from them
+               (or tag a hand-picked group). Hidden until something is ticked. -->
+          <div id="gallery-bulk" class="bulk-tag-bar gallery-bulk" hidden>
+            <span id="gallery-bulk-count" class="gallery-bulk-count"></span>
+            <button id="gallery-bulk-add" type="button">Tag selected&hellip;</button>
+            <button id="gallery-bulk-remove" type="button">Remove tag&hellip;</button>
+            <button id="gallery-bulk-clear" type="button" class="gallery-bulk-clear">Clear</button>
+          </div>
+          <div id="gallery-grid" class="gallery-grid"></div>
+        </div>
+
+        <!-- Results: hits from the last similarity search. -->
+        <div id="search-view" class="pane-view" hidden>
+          <div id="search-status" class="search-status"></div>
+          <!-- Filter the shown results by tag (client-side, no re-search), e.g.
+               "the gears among these hits". Reset to All on every new search;
+               the search itself always ranks over the whole index. -->
+          <div id="results-filter" class="tag-filter results-filter"></div>
+          <!-- Similarity threshold: filters the results shown below by score,
+               live, without re-running the search (a later slice tags what is
+               left). -->
+          <div class="threshold-bar">
+            <label for="search-threshold">Min similarity</label>
+            <input id="search-threshold" type="range" min="0.6" max="1" step="0.002" value="0.75" />
+            <span id="threshold-value" class="threshold-value">0.7500</span>
+          </div>
+          <!-- Bulk tag: add one tag to every result currently shown (the ones
+               above the similarity threshold) in a single request. The name is
+               taken in the shared tag picker, which opens next to the button
+               and shows how many results the write would cover. -->
+          <div class="bulk-tag-bar">
+            <button id="bulk-tag-apply" type="button">Tag shown results&hellip;</button>
+          </div>
+          <div id="search-grid" class="search-grid"></div>
+        </div>
+
+        <!-- Estimate: predicted production records for the query part, from the
+             records of its nearest neighbours (the Context Layer). -->
+        <div id="estimate-view" class="pane-view" hidden>
+          <!-- Top neighbours: the record-bearing neighbours that fed the
+               prediction, each with a thumbnail and its fields side by side.
+               The title carries the evidence depth (e.g. "6 of 8"). -->
+          <div id="estimate-neighbors" class="estimate-neighbors"></div>
+          <!-- Predicted fields, one row each, with a status chip. Scroll down
+               past the neighbours to reach it. -->
+          <div id="estimate-predictions" class="estimate-predictions"></div>
+        </div>
+
+        <!-- Catalogue: the frontier of the Ward tree -- every branch cut at the
+             first node whose cohesion reaches the threshold, plus the branches
+             that never reached it. One tile per group, in the order the server
+             returns (largest first). The catalogue is a cut of the tree, so it
+             is only meaningful under Ward clustering and only at the tree's own
+             Max clusters: the levels are 1, 2, 4, ... k_max, so a different
+             k_max numbers the nodes differently and the ids would not resolve. -->
+        <div id="catalogue-view" class="pane-view" hidden>
+          <!-- Threshold and Min parts are read on Reload only. Editing a number
+               does not refetch: the fetch walks the whole tree, and refetching
+               on every keystroke would start builds the user has not asked
+               for. -->
+          <div class="catalogue-controls">
+            <label for="catalogue-threshold">Threshold</label>
+            <input id="catalogue-threshold" type="number" min="0.01" max="1" step="0.01" value="0.95" />
+            <label for="catalogue-minparts">Min parts</label>
+            <input id="catalogue-minparts" type="number" min="1" step="1" value="2" />
+            <!-- The size at which "reached the threshold" becomes a claim worth
+                 making. Cohesion is entangled with size: three parts averaging
+                 0.96 over three pairs says far less than 180 parts averaging
+                 0.9576 over 16,110. -->
+            <label for="catalogue-minreached" title="Minimum parts for a group to count as Confident">Confident &ge;</label>
+            <input id="catalogue-minreached" type="number" min="1" step="1" value="5" />
+            <button id="catalogue-reload" type="button">Reload</button>
+            <!-- The server returns the tree's own order. "Part count" is a
+                 client-side sort of what is already here, so changing it costs
+                 no request. -->
+            <label for="catalogue-sort">Order</label>
+            <select id="catalogue-sort">
+              <option value="tree" selected>Tree order</option>
+              <option value="count">Part count</option>
+            </select>
+          </div>
+          <!-- Ticking 300 tiles by hand is not a workflow, so the three sets
+               worth having are buttons. They go through the same selection
+               path as a tile's own checkbox, so the tree follows either way. -->
+          <div class="catalogue-select">
+            <button id="catalogue-select-confident" type="button">Select all Confident</button>
+            <button id="catalogue-select-shown" type="button">Select all shown</button>
+            <button id="catalogue-select-clear" type="button">Clear selection</button>
+          </div>
+          <!-- One tag over every part in the ticked groups, through the shared
+               tag picker in its inline shape: the selection is built up over
+               many tiles and usually outlives one tag, so the field stays on
+               screen rather than being raised per apply. The picker carries the
+               count that has to be read before Apply -- tagging writes to the
+               index and cannot be undone from here -- and reports what the
+               write did, including what it refused to do. -->
+          <div id="catalogue-tagbar"></div>
+          <!-- One line of state: why the catalogue is empty, or what it holds. -->
+          <div id="catalogue-note" class="catalogue-note"></div>
+          <!-- How good the cut was: confident vs small vs mixed, sizes,
+               buckets. Collapsed to one line by default -- the tiles are what
+               the tab is for, and this was taking a third of the height. -->
+          <details id="catalogue-stats" class="catalogue-stats" hidden>
+            <summary id="catalogue-stats-summary" class="catalogue-stats-summary"></summary>
+            <div id="catalogue-stats-body" class="catalogue-stats-body"></div>
+          </details>
+          <div id="catalogue-grid" class="gallery-grid"></div>
+        </div>
+
+        <!-- Properties, below the thumbnails (like the desktop sandbox): the
+             index's properties when nothing is selected, or the selected part's
+             properties after a single-click. Double-click a tile to open it in
+             the 3D viewer. -->
+        <div class="info-panel">
+          <!-- Close button for the whole property panel (index and part
+               properties alike). Absolutely positioned in the panel's top-right
+               so it does not add height (the panel sits above the gallery/results
+               and must not grow to obscure them). In Gallery/Results it dismisses
+               the panel until the next selection change (a part click, a
+               deselect, or an empty-space click revives it); on the map it also
+               clears the picked point. -->
+          <button id="part-info-close" type="button" class="info-close" title="Close">&times;</button>
+          <dl id="index-props" class="props"></dl>
+          <!-- The selected part's properties and its tag editor. Shown in place
+               of the index properties after a part is single-clicked. -->
+          <div id="part-info" hidden>
+            <!-- A picked map point shows its part's thumbnail here; cleared for
+                 gallery/result selections, which have their own tiles. -->
+            <img id="part-thumb" class="part-thumb" alt="" hidden />
+            <dl id="part-props" class="props"></dl>
+            <button id="part-compare" type="button" class="text-button" title="Compare with the current model" hidden>Compare</button>
+            <button id="part-delete" type="button" class="text-button text-button-danger" title="Delete from the index" hidden>Delete</button>
+            <div id="tag-editor"></div>
+          </div>
+        </div>
+      </aside>
+    </main>
+
+    <!-- Bulk registration workspace (hidden until "Register..." is clicked).
+         A modal over the whole app: pick a folder, the client uploads the CAD
+         files it holds and queues an embedding job, then polls it to show
+         progress, the per-file failure report, and controls to cancel or
+         resubmit the retryable failures. See src/register.js. -->
+    <div id="register-modal" class="register-modal" hidden>
+      <div class="register-dialog" role="dialog" aria-modal="true" aria-labelledby="register-title">
+        <div class="register-head">
+          <h2 id="register-title" class="register-title">Register parts</h2>
+          <span id="register-index" class="register-index"></span>
+          <button id="register-close" type="button" class="register-close" aria-label="Close">&times;</button>
+        </div>
+
+        <!-- Folder picker: webkitdirectory selects a folder and yields every
+             file under it (subfolders included). The client filters to CAD
+             extensions before uploading. -->
+        <div id="register-drop" class="register-drop">
+          <p class="register-drop-label">
+            Choose a folder to register every CAD file it contains
+            (subfolders included), or drop files here.
+          </p>
+          <div class="register-pick-row">
+            <button id="register-pick-folder" type="button">Choose folder&hellip;</button>
+            <input id="register-folder-input" type="file" webkitdirectory multiple hidden />
+            <button id="register-pick-files" type="button">Choose files&hellip;</button>
+            <input id="register-files-input" type="file" multiple hidden />
+          </div>
+          <div id="register-selection" class="register-selection"></div>
+        </div>
+
+        <!-- Optional tuning, matching the job API (omit for automatic sizing).
+             A short time limit + many workers is the first pass; few workers +
+             a long limit is the retry pass. -->
+        <div class="register-options">
+          <label>Workers
+            <input id="register-workers" type="number" min="1" max="64" placeholder="auto" />
+          </label>
+          <label>Time limit (s)
+            <input id="register-timelimit" type="number" min="1" placeholder="auto" />
+          </label>
+          <button id="register-submit" type="button" class="register-submit" disabled>Upload &amp; register</button>
+        </div>
+
+        <div id="register-phase" class="register-phase"></div>
+
+        <!-- Live progress for the running job. -->
+        <div id="register-progress" class="register-progress" hidden>
+          <div class="register-bar"><div id="register-bar-fill" class="register-bar-fill"></div></div>
+          <div id="register-progress-text" class="register-progress-text"></div>
+          <button id="register-cancel" type="button" class="register-cancel">Cancel</button>
+        </div>
+
+        <!-- Result summary + report + resubmit-retryable action. -->
+        <div id="register-result" class="register-result" hidden>
+          <div id="register-summary" class="register-summary"></div>
+          <div class="register-result-actions">
+            <button id="register-resubmit" type="button" hidden>Resubmit retryable failures</button>
+          </div>
+          <pre id="register-report" class="register-report"></pre>
+        </div>
+
+        <!-- Recent jobs for this index. -->
+        <div class="register-jobs">
+          <h3 class="register-jobs-title">Recent jobs</h3>
+          <div id="register-jobs-list" class="register-jobs-list"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Create-index dialog (hidden until "New..." is clicked): a small modal
+         that takes an index name and creates an empty index via the API. The
+         embeddings model is the server's active model (not chosen here). The
+         delete action uses a plain confirm() rather than a modal. -->
+    <div id="index-create-modal" class="index-create-modal" hidden>
+      <div class="index-create-dialog" role="dialog" aria-modal="true" aria-labelledby="index-create-title">
+        <div class="index-create-head">
+          <h2 id="index-create-title" class="index-create-title">Create index</h2>
+          <button id="index-create-close" type="button" class="index-create-close" aria-label="Close">&times;</button>
+        </div>
+        <label class="index-create-field">
+          Name
+          <input
+            id="index-create-name"
+            type="text"
+            maxlength="64"
+            placeholder="e.g. my_parts"
+            autocomplete="off"
+            spellcheck="false"
+          />
+        </label>
+        <p class="index-create-hint">
+          Lower-case letters, digits, hyphen and underscore only (1&ndash;64
+          characters). The index is created empty, with the server's active
+          embeddings model.
+        </p>
+        <div id="index-create-error" class="index-create-error" hidden></div>
+        <div class="index-create-actions">
+          <button id="index-create-cancel" type="button">Cancel</button>
+          <button id="index-create-submit" type="button" class="index-create-submit">Create</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Loading overlay: shared by every screen (see src/ui.js). -->
+    <div id="loading-overlay" class="loading-overlay" hidden>
+      <div class="spinner"></div>
+    </div>
+
+    <script type="module" src="./src/main.js"></script>
+  </body>
+</html>
