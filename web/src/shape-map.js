@@ -3786,11 +3786,16 @@ export function createShapeMap({
   // cloud <-> 3D models), which rebuilds the viewer but shows the SAME
   // categories. Dropping the checkboxes there threw away the user's filtering
   // for no reason, so the state is remembered per signature: same index, kind,
-  // colour scheme, depth, subset and node names. Anything else -- switching
-  // Cluster/Tag colouring, changing the cluster count, changing kind or index
+  // colour scheme, clustering, depth, subset and node names. Anything else --
+  // switching Cluster/Tag colouring, switching clustering, changing the cluster
+  // count, changing kind or index
   // -- is a different set of categories and starts from the defaults, but it
   // now gets its own slot instead of overwriting the one it displaced, so
   // coming back to it restores what was there.
+  // The clustering is in there because the node names are not enough on their
+  // own: Ward and average linkage cut trees of the same shape at the same
+  // ceiling, so both answer with the same 'C1, C2, ...' naming different
+  // families, and the two shared one slot until the clustering was added.
   // One category's identity: the checkbox, the swatch, the name, the count and
   // the cohesion. Built here rather than inside renderLegend() because Ward's
   // tree shows the SAME categories on its cut rows -- the legend is one row of
@@ -3991,6 +3996,12 @@ export function createShapeMap({
       getIndexName ? getIndexName() : '',
       kind,
       colorBy,
+      // Ward and average linkage cut trees of the same shape at the same
+      // ceiling, so their node names are the same list -- 'C1, C2, ...' under
+      // one is 'C1, C2, ...' under the other, naming entirely different
+      // families. The names below cannot tell the two apart, so the clustering
+      // has to say so itself.
+      clustering,
       // Drilling produces a different set of clusters even when the node names
       // repeat (C1, C2, ...), so the depth belongs in the signature; without it
       // the checkboxes would carry over onto unrelated categories.
@@ -4650,10 +4661,26 @@ export function createShapeMap({
     // builds one tree over every part); the busy badge covers it, and every
     // later cluster count is served from that tree.
     async setClustering(value) {
-      const next = String(value || '').toLowerCase();
-      clustering = MAP_CLUSTERINGS.has(next) ? next : 'kmeans';
+      const raw = String(value || '').toLowerCase();
+      const next = MAP_CLUSTERINGS.has(raw) ? raw : 'kmeans';
+      const changed = next !== clustering;
+      clustering = next;
       // k-means clusters and Ward's tree nodes are two different partitions.
       clearModelFocus();
+      // Ward and average build different trees, so every id in the tree names a
+      // node of the clustering that has just been left -- the same reason
+      // setWardMax() discards this. Conditional, unlike the rebuild below,
+      // because resetMapControls() and applyServerClustering() both call this
+      // at startup to store a remembered choice; an early return there could
+      // skip the first load, but discarding nothing costs nothing.
+      if (changed) {
+        treeData = null;
+        treeError = null;
+        treeOpen = new Set();
+        treeSeeded = false;
+        treeColorOf = new Map();
+        treeColorByCategory = new Map();
+      }
       if (active) {
         pendingCamera = getMapCamera();
         await requestLoad();

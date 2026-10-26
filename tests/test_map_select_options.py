@@ -226,5 +226,62 @@ class MapTreeClusteringTests(unittest.TestCase):
         )
 
 
+class MapClusteringStateTests(unittest.TestCase):
+    """Client state that belongs to one clustering must be keyed by it.
+
+    Here rather than in a file of its own because it is the same failure the
+    rest of this module guards: a value the client knows about that one place
+    does not account for. Ward and average linkage cut trees of the same shape
+    at the same ceiling, so the server answers both with the same positional
+    node names (group_0000, group_0001, ...) naming different families. Any
+    client state keyed on those names alone is therefore shared between the
+    two, and the legend's checkboxes and the Similarity order were.
+
+    Source inspection, like test_main_js_never_compares_a_clustering_with_a
+    _literal above: the behaviour needs a browser, the invariant does not.
+    """
+
+    def _function_body(self, source: str, opening: str) -> str:
+        """The text from `opening` to the end of its brace-balanced block."""
+        start = source.index(opening)
+        depth = 0
+        for offset in range(start, len(source)):
+            char = source[offset]
+            if char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+                if depth == 0:
+                    return source[start:offset + 1]
+        self.fail(f"{opening!r} is not brace-balanced in web/src/shape-map.js")
+
+    def test_the_legend_signature_carries_the_clustering(self):
+        source = _read("web/src/shape-map.js")
+        body = self._function_body(source, "function renderLegend(groups) {")
+        signature = body[body.index("const signature = ["):body.index("].join('|')")]
+        # The entries are bare identifiers, so look for one on a line of its own.
+        self.assertIn(
+            "clustering,",
+            "".join(line.split("//", 1)[0] for line in signature.splitlines()),
+            "renderLegend()'s signature does not include the clustering, so Ward "
+            "and Average share one legendStateFor() slot: their node names are "
+            "the same positional list and cannot tell the two trees apart.",
+        )
+
+    def test_set_clustering_discards_the_tree(self):
+        source = _read("web/src/shape-map.js")
+        body = self._function_body(source, "async setClustering(value) {")
+        for name in ("treeData", "treeOpen", "treeSeeded", "treeColorOf"):
+            with self.subTest(state=name):
+                self.assertIn(
+                    f"{name} =",
+                    body,
+                    f"setClustering() does not discard {name}. Ward and average "
+                    "build different trees, so every node id names a family of "
+                    "the clustering being left -- the same reason setWardMax() "
+                    "discards it.",
+                )
+
+
 if __name__ == "__main__":
     unittest.main()
