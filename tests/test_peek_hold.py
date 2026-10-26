@@ -104,10 +104,19 @@ class PeekHoldTests(unittest.TestCase):
         """The menu is the other half: it takes the hold when it opens and
         gives it up when it closes, except on the handover to an item that
         opens a panel of its own.
+
+        The release is in a `finally` because an item that throws would
+        otherwise leave the hold standing, and a standing hold is not an error
+        anyone sees -- the hover preview just stops working for the rest of
+        the session.
         """
         source = _read(_SHAPE_MAP)
         self.assertIn("holdPeek('menu')", _function_body(source, "function openRowMenu(event, items, peek = null) {"))
         self.assertIn("releasePeek('menu')", _function_body(source, "function closeRowMenu(options) {"))
+        self.assertIn(
+            "        } finally {\n          releasePeek('menu');\n        }",
+            source,
+        )
 
 
 class TagPopoverCloseTests(unittest.TestCase):

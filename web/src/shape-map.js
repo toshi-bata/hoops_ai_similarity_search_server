@@ -1560,9 +1560,16 @@ export function createShapeMap({
         // such gap. The item either takes the token for itself, or it does
         // not, and the line below ends the preview for everything that does
         // not: Isolate, Hide, Show all and Drill in all act and return.
+        //
+        // try/finally, with no catch: a hold left standing is not an error
+        // anyone sees -- the hover preview simply stops working, silently and
+        // for the rest of the session. The item's exception still propagates.
         closeRowMenu({ keepPeek: true });
-        item.run();
-        releasePeek('menu');
+        try {
+          item.run();
+        } finally {
+          releasePeek('menu');
+        }
       });
       menu.appendChild(button);
     }
