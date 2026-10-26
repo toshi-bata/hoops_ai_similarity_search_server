@@ -377,6 +377,11 @@ function closeOpenPopover() {
   document.removeEventListener('keydown', panel.onKeyDown, true);
   panel.picker.destroy();
   panel.element.remove();
+  // Told last, once the panel is really gone, and only to a caller that asked:
+  // a caller reacts by restoring whatever it suspended while the popover was
+  // up, and that restore must not race the teardown. `openPopover` is cleared
+  // first so that a callback which opens another popover cannot re-enter this.
+  if (panel.onClose) panel.onClose();
 }
 
 export function closeTagPopover() {
@@ -404,9 +409,14 @@ function placePanel(element, at) {
 //   title   what is being tagged, in words -- the popover's one addition to
 //           the inline bar, because unlike a bar in a tab it is not obvious
 //           from its surroundings what the target is.
+//   onClose called once when this panel goes away, however it goes -- the
+//           close button, a click outside, Escape, or another popover opening
+//           over it. Optional, and destructured out here so that it never
+//           reaches createTagPicker: a caller that does not pass one gets
+//           exactly the behaviour it had before this existed.
 //
 // Every other option is passed straight to createTagPicker.
-export function openTagPopover({ at, anchor, title = 'Tag parts', ...options }) {
+export function openTagPopover({ at, anchor, title = 'Tag parts', onClose = null, ...options }) {
   closeOpenPopover();
 
   // The vocabulary may have been edited by hand since it was last read. This
@@ -452,7 +462,7 @@ export function openTagPopover({ at, anchor, title = 'Tag parts', ...options }) 
   };
   document.addEventListener('pointerdown', onPointerDown, true);
   document.addEventListener('keydown', onKeyDown, true);
-  openPopover = { element, picker, onPointerDown, onKeyDown };
+  openPopover = { element, picker, onPointerDown, onKeyDown, onClose };
 
   picker.focus();
   return { close: closeOpenPopover, sync: picker.sync };

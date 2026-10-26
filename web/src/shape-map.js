@@ -809,6 +809,52 @@ export function createShapeMap({
   // Bumped to cancel a hover load that has not run yet, or whose turn on the
   // chain comes after the pointer has already moved on.
   let peekModelSeq = 0;
+  // Who, if anyone, is keeping the preview on screen after the pointer has
+  // left the row: 'menu' while a row's right-click menu is open, 'tag' while
+  // the tag popover it raised is open, null the rest of the time. Without it,
+  // choosing Tag... meant the isolated cluster vanished at the moment the user
+  // was asked to name it.
+  //
+  // A single owner token rather than a counter. A counter survives a missed
+  // release as a hold that never reaches zero, and the symptom of that is the
+  // hover preview silently never working again for the rest of the session --
+  // a bug nobody would connect to a menu they closed minutes earlier. With a
+  // token, taking the hold OVERWRITES whoever had it, so a leak is bounded:
+  // the next menu takes it back, and releasing checks the token so a late
+  // release from something already superseded cannot cut the preview short.
+  let peekHold = null;
+
+  function holdPeek(token) {
+    peekHold = token;
+  }
+
+  // Only the holder may release, and the release is also where the preview
+  // actually ends -- one endPeek() for the whole menu-and-popover gesture.
+  function releasePeek(token) {
+    if (peekHold !== token) return;
+    peekHold = null;
+    endPeek();
+  }
+
+  // The hold suppresses hover, and ONLY hover. Every other caller of
+  // schedulePeek/endPeek -- a rebuild, going busy, a checkbox, switching index
+  // -- is a change to what the map shows, and must go through whether a menu
+  // is open or not; endPeek() itself is therefore left unguarded, and the
+  // suppression lives here, on the two handlers the pointer drives.
+  //
+  // Ending is suppressed so the preview outlives the pointer leaving the row.
+  // Starting is suppressed as well, because with the menu open the pointer
+  // travels across other rows on its way to it, and the preview would walk off
+  // the row the menu belongs to.
+  function hoverPeek(names, row, options) {
+    if (peekHold) return;
+    schedulePeek(names, row, options);
+  }
+
+  function hoverEndPeek() {
+    if (peekHold) return;
+    endPeek();
+  }
 
   function clearPeekTimer() {
     if (peekTimer !== null) {
@@ -824,7 +870,12 @@ export function createShapeMap({
   // `names` is the set of categories to show, `key` identifies the row that
   // asked (so a load can tell whether the pointer is still on it), and
   // `centreFileId` is the part to point out as the middle of them.
-  function schedulePeek(names, row, { key, centreFileId = null } = {}) {
+  //
+  // `now` skips the hover delay. The right-click menu uses it: the menu is
+  // already on screen by the time this runs, and a quarter of a second in
+  // which the menu is open over an unchanged map reads as the menu having
+  // nothing to do with the row it came from.
+  function schedulePeek(names, row, { key, centreFileId = null, now = false } = {}) {
     clearPeekTimer();
     // The search map's overlaid models are the search hits, not a legend
     // category: a per-category preview has nothing meaningful to show, it
@@ -833,24 +884,16 @@ export function createShapeMap({
     // checkboxes there. No preview at all is the honest answer.
     if (searchMode) return;
     if (!names || names.size === 0) return;
-    // A short delay so sweeping the pointer down the legend does not fire a
-    // preview for every row it crosses.
-    peekTimer = window.setTimeout(() => {
-      peekTimer = null;
-      if (!active || !mapViewer || mapBusy) return;
-      peekKey = key;
-      peekNames = names;
-      // groupChecked's keys are exactly the categories of the current map,
-      // which is the range the viewer is allowed to touch. Anything else named in the
-      // SCS -- in particular the categories' ancestors -- must be left alone;
-      // hiding one of those would take its whole subtree, including the
-      // category being previewed, off the screen.
-      mapViewer.setGroupsVisible(names, new Set(groupChecked.keys()));
-      if (displayMode === 'models') peekMapModelGroups(names);
-      if (row) row.classList.add('map-legend-row-peek');
-      markPeekCentre(centreFileId);
-      if (zoomOnHover) focusGroups(names);
-    }, PEEK_DELAY_MS);
+    if (now) {
+      applyPeek(names, row, key, centreFileId);
+    } else {
+      // A short delay so sweeping the pointer down the legend does not fire a
+      // preview for every row it crosses.
+      peekTimer = window.setTimeout(() => {
+        peekTimer = null;
+        applyPeek(names, row, key, centreFileId);
+      }, PEEK_DELAY_MS);
+    }
     // A second, independent timer for the heavy half. The visibility preview
     // above still fires at 250 ms whatever this one does.
     if (displayMode === 'models') {
@@ -859,6 +902,24 @@ export function createShapeMap({
         schedulePeekModels(key);
       }, PEEK_MODEL_DELAY_MS);
     }
+  }
+
+  // The visibility half of the preview, as applied. Split out of the timer so
+  // that the menu can reach it synchronously.
+  function applyPeek(names, row, key, centreFileId) {
+    if (!active || !mapViewer || mapBusy) return;
+    peekKey = key;
+    peekNames = names;
+    // groupChecked's keys are exactly the categories of the current map,
+    // which is the range the viewer is allowed to touch. Anything else named in the
+    // SCS -- in particular the categories' ancestors -- must be left alone;
+    // hiding one of those would take its whole subtree, including the
+    // category being previewed, off the screen.
+    mapViewer.setGroupsVisible(names, new Set(groupChecked.keys()));
+    if (displayMode === 'models') peekMapModelGroups(names);
+    if (row) row.classList.add('map-legend-row-peek');
+    markPeekCentre(centreFileId);
+    if (zoomOnHover) focusGroups(names);
   }
 
   // Put the hovered row's load on the model chain. Everything is re-checked
@@ -1440,10 +1501,16 @@ export function createShapeMap({
   let rowMenuEl = null;
   let lastRowMenuPoint = null;
 
-  function closeRowMenu() {
+  function closeRowMenu(options) {
+    // Called both directly and as a scroll/resize listener, where the argument
+    // is an Event: read the flag defensively rather than destructuring.
+    const keepPeek = !!(options && options.keepPeek);
     if (!rowMenuEl) return;
     rowMenuEl.remove();
     rowMenuEl = null;
+    // Closing the menu is also where the preview it was holding ends -- unless
+    // the caller is handing the hold on to what the chosen item opens.
+    if (!keepPeek) releasePeek('menu');
     document.removeEventListener('mousedown', onRowMenuDismiss, true);
     document.removeEventListener('keydown', onRowMenuKey, true);
     // Capture, so scrolling the tree's own container closes it too: the menu is
@@ -1461,7 +1528,11 @@ export function createShapeMap({
     if (event.key === 'Escape') closeRowMenu();
   }
 
-  function openRowMenu(event, items) {
+  // `peek` is the row the menu belongs to, in the form schedulePeek() takes:
+  // {names, row, key, centreFileId}. The menu shows that cluster on its own
+  // for as long as it is open, so that an action is chosen against a picture
+  // of what it will act on.
+  function openRowMenu(event, items, peek = null) {
     closeRowMenu();
     // Where the menu was raised, kept so an action that opens a panel of its
     // own -- the tag popover -- can appear in the same place instead of
@@ -1480,8 +1551,18 @@ export function createShapeMap({
       if (item.disabled) button.disabled = true;
       if (item.title) button.title = item.title;
       button.addEventListener('click', () => {
-        closeRowMenu();
+        // Hand the hold over rather than release it and let the item take it
+        // again: releasing runs endPeek(), so the isolated cluster would blink
+        // off and back on between the menu closing and the tag popover
+        // opening. Deferring the release to a timer would hide the blink too,
+        // but it leaves a window in which nobody owns the hold -- and the
+        // item's own code runs inside exactly that window. A handover has no
+        // such gap. The item either takes the token for itself, or it does
+        // not, and the line below ends the preview for everything that does
+        // not: Isolate, Hide, Show all and Drill in all act and return.
+        closeRowMenu({ keepPeek: true });
         item.run();
+        releasePeek('menu');
       });
       menu.appendChild(button);
     }
@@ -1502,6 +1583,11 @@ export function createShapeMap({
     document.addEventListener('keydown', onRowMenuKey, true);
     window.addEventListener('scroll', closeRowMenu, true);
     window.addEventListener('resize', closeRowMenu);
+    // Last, so that nothing above can throw with the hold already taken, and
+    // without the hover delay: the menu is on screen now, and the cluster it
+    // belongs to should be too.
+    holdPeek('menu');
+    if (peek) schedulePeek(peek.names, peek.row, { key: peek.key, centreFileId: peek.centreFileId, now: true });
   }
 
   // Bring every drawn checkbox into line with groupChecked. The tree is
@@ -1717,7 +1803,7 @@ export function createShapeMap({
     // Same as the legend's scroll container: leaving the list between two rows
     // can skip a row's own mouseleave. Assigned, not added, so redrawing the
     // tree on every expand cannot stack handlers.
-    body.onmouseleave = () => endPeek();
+    body.onmouseleave = () => hoverEndPeek();
     body.replaceChildren();
     // Any open menu belongs to a row that has just been discarded.
     closeRowMenu();
@@ -1908,11 +1994,11 @@ export function createShapeMap({
       const peekCats = catsOf ? catsOf.get(node.id) || [] : [];
       if (peekCats.length) {
         const peekSet = new Set(peekCats.map((g) => g.node_name));
-        row.addEventListener('mouseenter', () => schedulePeek(peekSet, row, {
+        row.addEventListener('mouseenter', () => hoverPeek(peekSet, row, {
           key: `tree:${node.id}`,
           centreFileId: node.centre,
         }));
-        row.addEventListener('mouseleave', () => endPeek());
+        row.addEventListener('mouseleave', () => hoverEndPeek());
       }
       // How deep in the tree this row sits, root at L1. Dimmed inline rather
       // than through a class: it is a hint, not a column, and .map-row-centre
@@ -1988,7 +2074,12 @@ export function createShapeMap({
         // them all. Partly pinned reads as not pinned, so the item offers to
         // add the rest rather than to take the pinned ones away.
         for (const item of focusMenuItems(cats)) items.push(item);
-        openRowMenu(event, items);
+        openRowMenu(event, items, {
+          names: new Set(cats.map((g) => g.node_name)),
+          row,
+          key: `tree:${node.id}`,
+          centreFileId: node.centre,
+        });
       });
 
       body.appendChild(row);
@@ -4119,7 +4210,7 @@ export function createShapeMap({
     // Leaving the list entirely (between two rows, or off the panel) ends the
     // preview too; mouseleave on a row can be missed when the pointer moves
     // fast enough to skip the gap.
-    scroll.addEventListener('mouseleave', () => endPeek());
+    scroll.addEventListener('mouseleave', () => hoverEndPeek());
     // Ward draws its clusters in the tree panel instead: the legend would be
     // one cut of that tree, so listing the same families twice would be two
     // names for one thing. The breadcrumbs and the summary
@@ -4148,12 +4239,12 @@ export function createShapeMap({
       // mouseenter/mouseleave, NOT mouseover/mouseout: the row holds a
       // checkbox, a swatch and several spans, and the bubbling pair would fire
       // again every time the pointer crossed into or out of one of them.
-      row.addEventListener('mouseenter', () => schedulePeek(
+      row.addEventListener('mouseenter', () => hoverPeek(
         new Set([group.node_name]),
         row,
         { key: group.node_name, centreFileId: group.centre_file_id },
       ));
-      row.addEventListener('mouseleave', () => endPeek());
+      row.addEventListener('mouseleave', () => hoverEndPeek());
       // Drill in and Tag live here, as they do on the tree's rows. A row with
       // nothing to offer -- tag colouring, or Ward -- opens no menu at all
       // rather than an empty one.
@@ -4161,7 +4252,12 @@ export function createShapeMap({
         const items = groupMenuItems(group);
         if (!items.length) return;
         event.preventDefault();
-        openRowMenu(event, items);
+        openRowMenu(event, items, {
+          names: new Set([group.node_name]),
+          row,
+          key: group.node_name,
+          centreFileId: group.centre_file_id,
+        });
       });
       appendGroupIdentity(row, group, { stretchLabel: true });
       scroll.appendChild(row);
@@ -4310,10 +4406,18 @@ export function createShapeMap({
     if (!name) return;
     if (!fileIds || fileIds.length === 0) return;
 
-    // Stop the hover preview before the popover takes the pointer: the pointer
-    // is about to leave the row, and a preview left running would keep
-    // overriding the visibility the user is tagging against.
-    endPeek();
+    // The preview stays up while the parts are named. It used to be ended
+    // here, on the grounds that the pointer was about to leave the row and a
+    // preview left running would keep overriding the visibility being tagged
+    // against -- but that reason does not hold: the ids were fixed when the
+    // menu was opened, so what is on screen cannot change what is written.
+    // What it does change is whether the user can see which parts they are
+    // naming, and they could not. The hold also stops the pointer, on its way
+    // from the row to the popover, from previewing what it passes over.
+    //
+    // Taken AFTER the popover is open, not before: openTagPopover() closes any
+    // previous popover first, and that one's onClose releases 'tag'. Taking
+    // the token first would mean releasing the one just taken.
     openTagPopover({
       at: lastRowMenuPoint || undefined,
       title: 'Tag parts',
@@ -4321,7 +4425,9 @@ export function createShapeMap({
       // row stood for -- so the count never moves under the user.
       getSelection: () => ({ ids: fileIds, groups: null, note: label }),
       onApply: (tag, selection) => applyTagToParts(tag, selection.ids),
+      onClose: () => releasePeek('tag'),
     });
+    holdPeek('tag');
   }
 
   // The write half of tagParts(), split out so the Catalogue tab can reach the
