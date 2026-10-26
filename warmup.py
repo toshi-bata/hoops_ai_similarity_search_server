@@ -162,8 +162,11 @@ def _warmup_map_stages(name: str, stages: list[str], clusterings: list[str]) -> 
         )
         return
     for clustering in clusterings:
-        ward = clustering == "ward"
-        # ONE ceiling for all three Ward calls below -- the map, its SCS and the
+        # True for every clustering that builds a tree, not for Ward alone:
+        # average linkage takes the same granularity, ceiling and folded tree.
+        # k-means is the only one that does neither.
+        ward = clustering != "kmeans"
+        # ONE ceiling for all three tree calls below -- the map, its SCS and the
         # tree. Read once here so they cannot drift: the map's clusters are the
         # tree's leaves, and a mismatch leaves the two describing different
         # families (the same reason /map's ward_max and /map/tree's k_max must
@@ -202,21 +205,25 @@ def _warmup_map_stages(name: str, stages: list[str], clusterings: list[str]) -> 
                     "[WARMUP] '%s' shape map (%s) failed: %s", name, clustering, exc
                 )
 
-            # Ward's panel asks for the folded tree as soon as the map lands, so
-            # it is part of warming Ward. Built from the linkage the map above
-            # already cached, which is why it is not a stage of its own.
+            # A tree clustering's panel asks for the folded tree as soon as the
+            # map lands, so it is part of warming it. Built from the linkage
+            # the map above already cached, which is why it is not a stage of
+            # its own.
             if ward:
                 try:
                     started = time.perf_counter()
                     shape_map.compute_index_shape_map_tree(
-                        name, kind=_WARMUP_KIND, k_max=ward_max
+                        name, kind=_WARMUP_KIND, k_max=ward_max,
+                        clustering=clustering,
                     )
                     logger.info(
-                        "[WARMUP] '%s' Ward tree (k_max=%d) ready in %.2fs",
-                        name, ward_max, time.perf_counter() - started,
+                        "[WARMUP] '%s' %s tree (k_max=%d) ready in %.2fs",
+                        name, clustering, ward_max, time.perf_counter() - started,
                     )
                 except Exception as exc:
-                    logger.warning("[WARMUP] '%s' Ward tree failed: %s", name, exc)
+                    logger.warning(
+                        "[WARMUP] '%s' %s tree failed: %s", name, clustering, exc
+                    )
 
         if "scs" in stages:
             # Stage 2b: the map's point-cloud SCS (~0.4 s), built from the map

@@ -274,7 +274,7 @@ export function shapeMapTree(
   // `kMax` must equal the `wardMax` given to shapeMap() and mapScsUrl(): all
   // three read the same ceiling, so a mismatch leaves the tree's leaves and
   // the map's clusters describing different families.
-  { tags, tagMode, tagged, kind, onlyFileIds, kMax = 256 } = {},
+  { tags, tagMode, tagged, kind, onlyFileIds, kMax = 256, clustering } = {},
 ) {
   const opts = {
     method: 'POST',
@@ -284,6 +284,10 @@ export function shapeMapTree(
       tagged,
       kind,
       k_max: kMax,
+      // Which linkage builds the tree. Left undefined at the server's default
+      // ('ward'), so a Ward request is byte for byte the one this client sent
+      // before the choice existed.
+      clustering: clustering === 'ward' ? undefined : clustering,
     },
   };
   if (onlyFileIds && onlyFileIds.length) opts.body = { only_file_ids: [...onlyFileIds] };
@@ -345,6 +349,7 @@ export function shapeMapCatalogue(
     tags,
     tagMode,
     tagged,
+    clustering,
   } = {},
 ) {
   return request(`/similarity/index/${encodeURIComponent(name)}/map/catalogue`, {
@@ -358,6 +363,10 @@ export function shapeMapCatalogue(
       tags,
       tag_mode: tagMode,
       tagged,
+      // Which linkage the tree was built with -- it must be the one the map on
+      // screen is showing, or the node ids name families the tree panel is not
+      // drawing. undefined at the server's default ('ward').
+      clustering: clustering === 'ward' ? undefined : clustering,
     },
   });
 }

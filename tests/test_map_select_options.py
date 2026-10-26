@@ -25,6 +25,8 @@ _SELECT = r'<select\s+id="{id}"[^>]*>(.*?)</select>'
 _OPTION_VALUE = re.compile(r'<option\s+value="([^"]*)"')
 # `const NAME = new Set(['a', 'b']);` -- the client's allow-set.
 _JS_SET = r"const\s+{name}\s*=\s*new\s+Set\(\[([^\]]*)\]\)"
+# `const NAME = ['a', 'b'];` -- the same list where main.js keeps it as an array.
+_JS_ARRAY = r"const\s+{name}\s*=\s*\[([^\]]*)\]"
 _JS_STRING = re.compile(r"""['"]([^'"]*)['"]""")
 
 
@@ -46,6 +48,15 @@ def _js_set_values(source: str, name: str) -> set:
     """The members of a `new Set([...])` of string literals in a JS module."""
     match = re.search(_JS_SET.format(name=re.escape(name)), source, re.DOTALL)
     assert match, f"{name} is not defined as a `new Set([...])`"
+    values = set(_JS_STRING.findall(match.group(1)))
+    assert values, f"{name} is empty"
+    return values
+
+
+def _js_array_values(source: str, name: str) -> set:
+    """The members of a `const NAME = [...]` of string literals in a JS module."""
+    match = re.search(_JS_ARRAY.format(name=re.escape(name)), source, re.DOTALL)
+    assert match, f"{name} is not defined as a `[...]` array literal"
     values = set(_JS_STRING.findall(match.group(1)))
     assert values, f"{name} is empty"
     return values
@@ -100,17 +111,29 @@ class MapProjectionOptionsTests(unittest.TestCase):
 
 
 class MapClusteringOptionsTests(unittest.TestCase):
-    """The Clustering select and the server's _CLUSTERING_* constants agree.
+    """The Clustering select, shape-map.js and shape_map.py must offer one set.
 
-    Only two sides here. The client's setClustering() tests one value against a
-    literal and falls back to the other, so it has no declared set to compare
-    against; it cannot gain or lose a value without that line being rewritten,
-    which is a different kind of change from adding an <option>. The same is
-    true of Colour by (setColorBy) and Show (setKind), and neither of those has
-    server-side constants to compare against either, so they are not pinned
-    here. Giving each of them an allow-set would make them checkable -- worth
-    doing if a third value is ever added to any of them.
+    Three sides here too, for the reason the file's docstring gives. Until a
+    third clustering existed the client tested one value against a literal and
+    fell back to the other, so there was no declared set to compare against;
+    adding average linkage turned that line into the same trap the Layout
+    select fell into, and it was rewritten as MAP_CLUSTERINGS.
+
+    Colour by (setColorBy) and Show (setKind) are still two-valued literals and
+    have no server-side constants to compare against, so they are not pinned
+    here. Worth giving each of them an allow-set if a third value is ever added.
     """
+
+    def test_html_options_match_the_client_allow_set(self):
+        html = _select_values(_read("web/index.html"), "map-clustering")
+        js = _js_set_values(_read("web/src/shape-map.js"), "MAP_CLUSTERINGS")
+        self.assertEqual(
+            html,
+            js,
+            "The Clustering <select> and MAP_CLUSTERINGS in web/src/shape-map.js differ.\n"
+            f"  only in index.html:  {sorted(html - js)}\n"
+            f"  only in shape-map.js: {sorted(js - html)}",
+        )
 
     def test_html_options_match_the_server(self):
         html = _select_values(_read("web/index.html"), "map-clustering")
@@ -121,6 +144,85 @@ class MapClusteringOptionsTests(unittest.TestCase):
             "The Clustering <select> and shape_map.py's _CLUSTERING_* constants differ.\n"
             f"  only in index.html: {sorted(html - server)}\n"
             f"  only in shape_map:  {sorted(server - html)}",
+        )
+
+    def test_the_server_accepts_every_offered_clustering_unchanged(self):
+        """Behavioural check, as for the Layout select one layer down.
+
+        _normalize_map_clustering collapses what it does not recognise to
+        k-means, so a clustering the constants know about but the normalizer
+        forgets would silently draw a k-means map.
+        """
+        for value in sorted(_select_values(_read("web/index.html"), "map-clustering")):
+            with self.subTest(clustering=value):
+                self.assertEqual(shape_map._normalize_map_clustering(value), value)
+
+
+class MapTreeClusteringTests(unittest.TestCase):
+    """Which clusterings build a tree must be one answer, not three guesses.
+
+    Adding average linkage left one line in main.js comparing the select's
+    value with 'ward' directly. Everything else had moved to a predicate, so
+    the map itself clustered correctly -- only the toolbar did not, and it
+    offered Clusters (k) (the k-means control, ceiling 1024) where Max clusters
+    (ceiling 4096) belonged. The deeper cuts were simply unreachable, which is
+    the whole point of comparing the two linkage rules.
+
+    The DOM layout itself is awkward to test without a browser, so this pins
+    the three declared sets the layout is driven from, and then pins that
+    main.js holds no literal comparison that could drift away from them again.
+    """
+
+    def test_tree_clusterings_agree_across_the_two_client_modules(self):
+        shape = _js_set_values(_read("web/src/shape-map.js"), "MAP_TREE_CLUSTERINGS")
+        main = _js_array_values(_read("web/src/main.js"), "MAP_TREE_CLUSTERINGS")
+        self.assertEqual(
+            shape,
+            main,
+            "MAP_TREE_CLUSTERINGS differs between web/src/shape-map.js and web/src/main.js.\n"
+            f"  only in shape-map.js: {sorted(shape - main)}\n"
+            f"  only in main.js:      {sorted(main - shape)}",
+        )
+
+    def test_tree_clusterings_agree_with_the_server(self):
+        main = _js_array_values(_read("web/src/main.js"), "MAP_TREE_CLUSTERINGS")
+        server = set(shape_map._CLUSTERING_TREE)
+        self.assertEqual(
+            main,
+            server,
+            "MAP_TREE_CLUSTERINGS and shape_map._CLUSTERING_TREE differ.\n"
+            f"  only in main.js:   {sorted(main - server)}\n"
+            f"  only in shape_map: {sorted(server - main)}",
+        )
+
+    def test_every_tree_clustering_is_an_offered_clustering(self):
+        html = _select_values(_read("web/index.html"), "map-clustering")
+        for value in sorted(shape_map._CLUSTERING_TREE):
+            with self.subTest(clustering=value):
+                self.assertIn(value, html)
+
+    def test_main_js_never_compares_a_clustering_with_a_literal(self):
+        """The one line that was missed, pinned so the next one cannot be.
+
+        web/src/api.js is deliberately exempt: its two comparisons implement a
+        different rule -- omit the parameter at the server's default so the
+        request stays byte for byte what it was -- and that rule really does
+        name one value.
+        """
+        source = _read("web/src/main.js")
+        offenders = []
+        for line_no, line in enumerate(source.splitlines(), start=1):
+            code = line.split("//", 1)[0]
+            for value in sorted(shape_map._CLUSTERING_TREE):
+                if f"=== '{value}'" in code or f"!== '{value}'" in code:
+                    offenders.append(f"  web/src/main.js:{line_no}: {line.strip()}")
+        self.assertEqual(
+            offenders,
+            [],
+            "web/src/main.js compares a clustering with a literal:\n"
+            + "\n".join(offenders)
+            + "\nUse treeClusteringSelected() or MAP_TREE_CLUSTERINGS instead: a "
+            "literal here is what left Max clusters hidden under average linkage.",
         )
 
 

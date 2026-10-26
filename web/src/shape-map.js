@@ -228,6 +228,21 @@ const NEAREST_POINT_TOLERANCE = 0.05;
 // nothing at the time.
 const MAP_PROJECTIONS = new Set(['pca', 'umap']);
 
+// Every clustering the client may ask for, same contract as MAP_PROJECTIONS:
+// the <select id="map-clustering"> in index.html offers exactly these, and
+// tests/test_map_select_options.py pins that the HTML, this set and the
+// server's _normalize_map_clustering all agree. An unknown value falls back to
+// k-means, which every index can always be clustered with.
+const MAP_CLUSTERINGS = new Set(['kmeans', 'ward', 'average']);
+
+// The clusterings that build a tree. Everything the tree makes possible -- the
+// tree panel, the catalogue, the neutral cloud colour, cutting at a height --
+// belongs to all of them and to none of the others, so the checks below ask
+// this rather than naming Ward. (Adding 'average' meant finding every
+// `clustering === 'ward'` in this file; the set is here so the next one is a
+// single edit.)
+const MAP_TREE_CLUSTERINGS = new Set(['ward', 'average']);
+
 // Default size multiplier for the 3D-model map (the "Part" slider). Each model
 // is drawn at the size measured for the current layout (see
 // MODEL_SPACING_RATIO) times this,
@@ -329,16 +344,17 @@ export function createShapeMap({
   // when drilling -- it is an absolute similarity, so the same value means the
   // same thing at every level of the drill stack.
   let outlierThreshold = 0;
-  // The threshold that actually applies, which is 0 under Ward whatever the
-  // slider holds. Outliers carves a category out of each cluster by distance
-  // from its centroid -- a k-means idea. Ward cuts by height, where every
+  // The threshold that actually applies, which is 0 under a tree clustering
+  // whatever the slider holds. Outliers carves a category out of each cluster
+  // by distance from its centroid -- a k-means idea. Ward and average cut by
+  // height, where every
   // node's cohesion already reports how tight it is, and the extra category
   // would stop the map's categories matching the tree's nodes one for one,
   // which is what the tree's colours, checkboxes and tagging stand on. The
   // slider's own value is left alone so that going back to k-means brings it
-  // back; the host hides the control under Ward.
+  // back; the host hides the control under a tree clustering.
   function effectiveOutlierThreshold() {
-    if (clustering === 'ward') return 0;
+    if (treeClustering()) return 0;
     return outlierThreshold || 0;
   }
   // Which projection the server should use for the three drawn dimensions.
@@ -346,10 +362,16 @@ export function createShapeMap({
   // runs on the full-dimensional aggregate, so cluster membership, ids, colours
   // and the legend are identical under both.
   let projection = 'pca';
-  // How the server should group the parts: 'kmeans' (the default) or 'ward'.
-  // Unlike the projection this moves no point -- both run on the same
-  // full-dimensional aggregate and only change which cluster a part lands in.
+  // How the server should group the parts: one of MAP_CLUSTERINGS, 'kmeans' by
+  // default. Unlike the projection this moves no point -- all of them run on
+  // the same full-dimensional aggregate and only change which cluster a part
+  // lands in.
   let clustering = 'kmeans';
+  // Is the clustering on screen one that builds a tree? See
+  // MAP_TREE_CLUSTERINGS.
+  function treeClustering() {
+    return MAP_TREE_CLUSTERINGS.has(clustering);
+  }
   // The ceiling of Ward's tree: the cluster count its deepest level reaches.
   // ONE value, read by all three requests that depend on it -- /map's and
   // /map/scs's ward_max and /map/tree's k_max. They have to agree: the map's
@@ -1368,7 +1390,7 @@ export function createShapeMap({
   function paintTreeModelColors(frontier, catsOf, colorOf) {
     if (!mapViewer) return;
     if (displayMode !== 'models' || colorBy !== 'cluster') return;
-    if (clustering !== 'ward' || searchMode) return;
+    if (!treeClustering() || searchMode) return;
     const bands = [];
     const sent = [];
     for (const node of frontier) {
@@ -1570,7 +1592,7 @@ export function createShapeMap({
   // rather than ignored: that means the two are out of step, which the caller
   // has to say out loud.
   async function applyCatalogueSelection(nodeIds) {
-    if (!active || clustering !== 'ward') return { ok: false, reason: 'not-ward' };
+    if (!active || !treeClustering()) return { ok: false, reason: 'not-ward' };
     if (mapBusy) return { ok: false, reason: 'busy' };
     if (!treeData) {
       // The tree is fetched with the map, but the catalogue can be ticked
@@ -1705,7 +1727,7 @@ export function createShapeMap({
     // a tag colouring crosses the hierarchy, so the tree describes nothing the
     // map is showing. Hidden rather than merely empty, so the panel does not
     // keep a box of blank space under the legend.
-    const shown = clustering === 'ward' && colorBy === 'cluster';
+    const shown = treeClustering() && colorBy === 'cluster';
     body.hidden = !shown;
     if (!shown) {
       return;
@@ -2056,11 +2078,11 @@ export function createShapeMap({
         // anyway, so a k-means request stays byte for byte what it was. Always
         // the deepest cut now: the tree view shows every coarser grouping, so
         // there is nothing left for a cut height to choose.
-        granularity: clustering === 'ward' ? WARD_GRANULARITY : undefined,
+        granularity: treeClustering() ? WARD_GRANULARITY : undefined,
         // The ceiling that granularity is read against, and the same value
         // /map/tree is asked for below. undefined at the default, so a request
         // that does not move it stays byte for byte what it was.
-        wardMax: clustering === 'ward' && wardMax !== DEFAULT_WARD_MAX
+        wardMax: treeClustering() && wardMax !== DEFAULT_WARD_MAX
           ? wardMax
           : undefined,
         tagged: untaggedNow && !onlyFileIds ? false : undefined,
@@ -2163,7 +2185,7 @@ export function createShapeMap({
       // loaded after it are placed in them (see modelRgbFor).
       treeError = null;
       treeData = null;
-      if (clustering === 'ward') {
+      if (treeClustering()) {
         try {
           const tree = await api.shapeMapTree(name, {
             kind,
@@ -2172,6 +2194,9 @@ export function createShapeMap({
             // The same ceiling /map was given as ward_max above: the leaves of
             // this tree have to BE the map's clusters.
             kMax: wardMax,
+            // ...and the same linkage, or the leaves are a different set of
+            // families from the ones the map just drew.
+            clustering,
           });
           // A newer load owns the panel now. Returning rather than drawing:
           // this answer is stale, and showing it would replace the tree that
@@ -3534,7 +3559,7 @@ export function createShapeMap({
   // draws no tree, but its summary was already empty (that line counts
   // clusters), so only the search line is left to render either way.
   function renderLegendTools(groups) {
-    if (clustering === 'ward') {
+    if (treeClustering()) {
       if (colorBy === 'cluster') renderSearchSummary();
       else renderLegendSummary(groups);
       return null;
@@ -3889,7 +3914,7 @@ export function createShapeMap({
     // panel beside it has already answered.
     const drillable =
       colorBy === 'cluster'
-      && clustering !== 'ward'
+      && !treeClustering()
       && (key.startsWith('cluster:') || key === 'outliers');
     // Visibility first: it is what this menu is reached for most, and it is
     // the one thing every row can do whatever it holds. Single-category calls
@@ -4004,7 +4029,7 @@ export function createShapeMap({
     // Set before any early return below, so a map with no groups at all leaves
     // it right too.
     legendBodyEl.style.flex =
-      clustering === 'ward' && colorBy === 'cluster' ? '0 0 auto' : '';
+      treeClustering() && colorBy === 'cluster' ? '0 0 auto' : '';
     groupChecked.clear();
     // The rows these pointed at have just been discarded.
     legendRowOf.clear();
@@ -4037,7 +4062,7 @@ export function createShapeMap({
     const scroll = document.createElement('div');
     scroll.className = 'map-legend-scroll';
     legendBodyEl.appendChild(scroll);
-    const wardTree = clustering === 'ward' && colorBy === 'cluster';
+    const wardTree = treeClustering() && colorBy === 'cluster';
     const title = document.createElement('div');
     title.className = 'map-legend-title';
     title.textContent = 'Legend';
@@ -4621,11 +4646,12 @@ export function createShapeMap({
     // setProjection(): comparing k-means against Ward is worth doing from the
     // same camera, and the layout under it is identical.
     //
-    // Ward's first build on an index takes tens of seconds (it builds one tree
-    // over every part); the busy badge covers it, and every later cluster count
-    // is served from that tree.
+    // Ward's and average's first build on an index takes tens of seconds (it
+    // builds one tree over every part); the busy badge covers it, and every
+    // later cluster count is served from that tree.
     async setClustering(value) {
-      clustering = String(value || '').toLowerCase() === 'ward' ? 'ward' : 'kmeans';
+      const next = String(value || '').toLowerCase();
+      clustering = MAP_CLUSTERINGS.has(next) ? next : 'kmeans';
       // k-means clusters and Ward's tree nodes are two different partitions.
       clearModelFocus();
       if (active) {

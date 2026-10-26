@@ -156,7 +156,7 @@ class WarmupDrivesBuildEntryPoints(unittest.TestCase):
             "tmcad", kind="part", dims=3, color_by="cluster", projection="pca",
             include_tags=True, clustering="ward", granularity=1.0, ward_max=256,
         )
-        tree.assert_called_once_with("tmcad", kind="part", k_max=256)
+        tree.assert_called_once_with("tmcad", kind="part", k_max=256, clustering="ward")
         # Only the map stage was selected.
         scs.assert_not_called()
         searcher.assert_not_called()
@@ -187,7 +187,7 @@ class WarmupDrivesBuildEntryPoints(unittest.TestCase):
         scs.assert_called_once_with(
             "tmcad", **{k: v for k, v in expected.items() if k != "include_tags"}
         )
-        tree.assert_called_once_with("tmcad", kind="part", k_max=512)
+        tree.assert_called_once_with("tmcad", kind="part", k_max=512, clustering="ward")
 
     def test_stages_select_which_work_runs(self):
         schema = {"schema_version": core._INDEX_SCHEMA_VERSION}

@@ -1781,6 +1781,94 @@ class ShapeMapLinkageEquivalenceTests(unittest.TestCase):
         self.assertLess(float(np.max(np.abs(ours[:, 2] - theirs[:, 2]))), 1e-9)
 
 
+class ShapeMapLinkageMethodTests(unittest.TestCase):
+    """The linkage rule is a parameter, and it actually reaches scipy."""
+
+    @staticmethod
+    def _rows(n=60, dim=16, seed=11):
+        import numpy as np
+
+        rng = np.random.default_rng(seed)
+        rows = rng.standard_normal((n, dim)).astype(np.float32)
+        return shape_map._shape_map_l2norm_rows(rows)
+
+    def test_ward_is_the_default(self):
+        import numpy as np
+        pytest.importorskip("scipy")
+
+        rows = self._rows()
+        default = np.asarray(shape_map._shape_map_linkage_matrix(rows))
+        explicit = np.asarray(
+            shape_map._shape_map_linkage_matrix(rows, method="ward")
+        )
+        self.assertTrue(bool(np.array_equal(default, explicit)))
+
+    def test_average_builds_a_different_tree_from_ward(self):
+        """The point of the whole parameter.
+
+        If the method never reached scipy the two matrices would be identical
+        and every average-linkage map, tree and catalogue would be Ward's with
+        a different label on it -- which is the failure this pins.
+        """
+        import numpy as np
+        pytest.importorskip("scipy")
+
+        rows = self._rows()
+        ward = np.asarray(shape_map._shape_map_linkage_matrix(rows, method="ward"))
+        average = np.asarray(
+            shape_map._shape_map_linkage_matrix(rows, method="average")
+        )
+        self.assertEqual(ward.shape, average.shape)
+        self.assertFalse(bool(np.array_equal(ward, average)))
+        # Heights, not just merge order: average linkage averages the
+        # distances, so its merges sit lower than Ward's variance increase.
+        self.assertGreater(float(np.max(np.abs(ward[:, 2] - average[:, 2]))), 1e-6)
+
+    def test_average_matches_scipy_on_observations(self):
+        # The same equivalence the Ward path is held to: our blocked distances
+        # must give scipy the array it would have computed itself. This matters
+        # MORE for average than for Ward, because average linkage averages the
+        # distances themselves and so is not indifferent to a monotone change
+        # of distance.
+        import numpy as np
+        pytest.importorskip("scipy")
+        from scipy.cluster.hierarchy import linkage
+
+        rows = self._rows()
+        ours = np.asarray(
+            shape_map._shape_map_linkage_matrix(rows, method="average"),
+            dtype=np.float64,
+        )
+        theirs = linkage(np.asarray(rows, dtype=np.float64), method="average")
+        self.assertEqual(ours.shape, theirs.shape)
+        self.assertLess(float(np.max(np.abs(ours[:, 2] - theirs[:, 2]))), 1e-9)
+
+    def test_an_unknown_method_is_refused(self):
+        # k-means has no linkage, and scipy would happily build a "single"
+        # tree nobody asked for. Neither may arrive here unnoticed.
+        pytest.importorskip("scipy")
+
+        rows = self._rows(n=8, dim=4)
+        for method in ("kmeans", "single", "complete"):
+            with self.subTest(method=method):
+                with self.assertRaises(ValueError):
+                    shape_map._shape_map_linkage_matrix(rows, method=method)
+
+    def test_the_linkage_cache_key_carries_the_method(self):
+        """Without this, Ward's tree is served for an average request.
+
+        The aggregate key names the ROWS; two linkage rules over the same rows
+        are two different trees, so the key the linkage cache is read with has
+        to say which.
+        """
+        agg_key = ("/tmp/x.faiss", 1234, ("kind", "any"), "")
+        ward = shape_map._shape_map_linkage_cache_key(agg_key, "ward")
+        average = shape_map._shape_map_linkage_cache_key(agg_key, "average")
+        self.assertNotEqual(ward, average)
+        self.assertEqual(ward[: len(agg_key)], agg_key)
+        self.assertEqual(average[: len(agg_key)], agg_key)
+
+
 class ShapeMapWardDrillTests(unittest.TestCase):
     """Drilling into a Ward map descends the parent tree instead of rebuilding."""
 

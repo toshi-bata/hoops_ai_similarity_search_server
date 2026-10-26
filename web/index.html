@@ -119,16 +119,18 @@
             </select>
           </label>
           <!-- How the parts are grouped. Unlike Layout this does not move any
-               point: k-means and Ward both run on the full-dimensional vectors
-               and only decide which cluster a part belongs to. Ward is
-               hierarchical, so a larger k subdivides the clusters a smaller k
-               produced instead of replacing them. -->
+               point: k-means, Ward and average linkage all run on the
+               full-dimensional vectors and only decide which cluster a part
+               belongs to. Ward and average are both agglomerative, so a larger
+               k subdivides the clusters a smaller k produced instead of
+               replacing them. -->
           <label id="map-clustering-wrap" class="map-colorby" hidden
-                 title="How the parts are grouped. k-means partitions them afresh for every cluster count. Ward builds one tree, so raising the count splits clusters rather than reshuffling them -- its first build takes about 40 seconds on 8,000 parts, after which changing the count is instant.">
+                 title="How the parts are grouped. k-means partitions them afresh for every cluster count. Ward and Average both build one tree, so raising the count splits clusters rather than reshuffling them -- Ward prefers compact clusters of similar size; Average is there for comparison -- on an 8,000-part index it chains, leaving one 237-part branch unresolved where Ward's largest is 14. The first build takes about 40 seconds on 8,000 parts, after which changing the count is instant.">
             Clustering
             <select id="map-clustering">
               <option value="kmeans" selected>k-means</option>
               <option value="ward">Ward</option>
+              <option value="average">Average</option>
             </select>
           </label>
           <label id="map-display-wrap" class="map-colorby" hidden>

@@ -762,13 +762,34 @@ def _shape_map_kmeans_init() -> str:
 
 
 # Which algorithm turns the aggregate vectors into cluster labels. k-means is
-# the default and the only one that existed before; "ward" is scipy's
-# agglomerative hierarchical clustering, which builds one tree for the whole
-# index and cuts it at the requested count. The cut is what makes it worth
-# having: every k is a refinement of every smaller k, so raising Clusters (k)
-# splits the families already on screen instead of redrawing them.
+# the default and the only one that existed before; "ward" and "average" are
+# scipy's agglomerative hierarchical clustering, which builds one tree for the
+# whole index and cuts it at the requested count. The cut is what makes them
+# worth having: every k is a refinement of every smaller k, so raising
+# Clusters (k) splits the families already on screen instead of redrawing them.
+#
+# The two linkages differ only in the rule for the distance between two
+# clusters. Ward merges whichever pair adds least to the within-cluster
+# variance, which favours compact clusters of similar size and will cut a long
+# thin family in half rather than carry it. Average (UPGMA) takes the mean
+# distance between the members of the two clusters, which tolerates elongated
+# structure -- and this index has arc-shaped families that Ward splits.
 _CLUSTERING_KMEANS = "kmeans"
 _CLUSTERING_WARD = "ward"
+_CLUSTERING_AVERAGE = "average"
+
+# The clusterings that build a linkage tree, as opposed to fitting centroids.
+# Everything a tree makes possible -- the tree view, the catalogue, the
+# cohesion frontier, cutting at a height, descending into a drill-down -- is
+# available for every member and for no other clustering, so the checks that
+# used to read ``== _CLUSTERING_WARD`` ask this instead.
+_CLUSTERING_TREE = frozenset({_CLUSTERING_WARD, _CLUSTERING_AVERAGE})
+
+# Every clustering a request may name. Written as a set rather than a chain of
+# comparisons for the reason _normalize_map_projection's allow-set is: a chain
+# turns a value it forgets into the default silently, and "the map drew, just
+# not the one asked for" is the hardest kind of bug to notice.
+_CLUSTERINGS = frozenset({_CLUSTERING_KMEANS, _CLUSTERING_WARD, _CLUSTERING_AVERAGE})
 
 # The finest cut Ward offers, and the ceiling the granularity scale is read
 # against: granularity 1.0 means this many clusters (or the population, when it
@@ -797,14 +818,19 @@ class WardTooLarge(RuntimeError):
 
 
 def _normalize_map_clustering(clustering: Optional[str]) -> str:
-    """Normalize a clustering name to ``"kmeans"`` / ``"ward"``.
+    """Normalize a clustering name to one of :data:`_CLUSTERINGS`.
 
     Unknown values collapse to ``"kmeans"`` (the default algorithm) so a bad
     query never fails a map that would otherwise have been drawn. Same shape as
-    :func:`_normalize_map_projection`.
+    :func:`_normalize_map_projection`, allow-set and all.
     """
     c = str(clustering or _CLUSTERING_KMEANS).lower()
-    return _CLUSTERING_WARD if c == _CLUSTERING_WARD else _CLUSTERING_KMEANS
+    return c if c in _CLUSTERINGS else _CLUSTERING_KMEANS
+
+
+def _shape_map_tree_clustering(clustering: Optional[str]) -> bool:
+    """Is *clustering* one that builds a linkage tree?"""
+    return _normalize_map_clustering(clustering) in _CLUSTERING_TREE
 
 
 def _shape_map_ward_max_points() -> int:
@@ -836,14 +862,34 @@ def _shape_map_clustering_signature(clustering: str) -> tuple:
       nothing to put in it -- but then a Ward request would hash to the k-means
       entry for the same index and be answered with the k-means assignment. The
       fragment exists to say "a different algorithm", not to carry settings.
+    * ``average`` returns its own fragment, for the same reason and with the
+      same force: the two linkages are cut from different trees.
     """
-    if _normalize_map_clustering(clustering) != _CLUSTERING_WARD:
+    c = _normalize_map_clustering(clustering)
+    if c == _CLUSTERING_KMEANS:
         return ()
-    return (("ward",),)
+    return ((c,),)
+
+
+def _shape_map_linkage_cache_key(agg_key: tuple, method: str) -> tuple:
+    """Cache key for one linkage tree: the rows, plus the rule that joined them.
+
+    ``agg_key`` identifies the ROWS the tree is built over. It cannot identify
+    the tree on its own, because two linkage rules over the same rows produce
+    two different trees -- so without the method appended here, the tree built
+    for Ward is handed back for an average-linkage request, and every cut,
+    catalogue and tree view taken from it is labelled with the wrong method.
+
+    Unlike :func:`_shape_map_clustering_signature` this is non-empty for every
+    method, Ward included. Nothing on disk is addressed by it: the linkage
+    cache lives in memory for the life of the process, so there is no legacy
+    entry to keep reachable.
+    """
+    return agg_key + (("linkage", _normalize_map_clustering(method)),)
 
 
 def _shape_map_granularity_signature(clustering: str, granularity, ward_max=None) -> tuple:
-    """Cache-key fragment for Ward's cut height; empty unless it is in use.
+    """Cache-key fragment for a tree's cut height; empty unless it is in use.
 
     ``granularity`` is a height at which to cut the Ward tree, so it means
     nothing for k-means and nothing when it was not asked for -- both return
@@ -859,7 +905,7 @@ def _shape_map_granularity_signature(clustering: str, granularity, ward_max=None
     is appended only when it is not the default, which keeps every entry and
     every ``.scs`` written before it existed addressable by the same key.
     """
-    if _normalize_map_clustering(clustering) != _CLUSTERING_WARD:
+    if not _shape_map_tree_clustering(clustering):
         return ()
     if granularity is None:
         return ()
@@ -930,14 +976,25 @@ def _shape_map_condensed_sqdist(X, block_rows: int = _SHAPE_MAP_DIST_BLOCK_ROWS)
     return out
 
 
-def _shape_map_linkage_matrix(Xk):
-    """Build the Ward linkage tree over the aggregate rows *Xk*.
+def _shape_map_linkage_matrix(Xk, method: str = _CLUSTERING_WARD):
+    """Build the linkage tree over the aggregate rows *Xk*.
+
+    *method* is handed to scipy unchanged and is one of :data:`_CLUSTERING_TREE`
+    -- ``"ward"`` (the default, so every call written before the choice existed
+    means what it did) or ``"average"`` (UPGMA).
 
     Ward is a Euclidean method, which is what makes it defensible on rows that
     are compared elsewhere by cosine: :func:`_shape_map_l2norm_rows` has already
     L2-normalized them, so ``d^2 = 2 - 2cos`` and Euclidean distance is a
     monotone function of cosine distance. This is Ward on the unit sphere, and
     it orders pairs exactly the way the index's own similarity does.
+
+    Average linkage is given the SAME distances, deliberately. Average linkage
+    averages the distances themselves, so unlike Ward it is not indifferent to
+    a monotone change of distance -- feeding it cosine distance instead would
+    build a genuinely different tree. Feeding it the same condensed array Ward
+    gets keeps the comparison honest: the only thing that differs between the
+    two trees is the linkage rule.
 
     The distances are computed here by :func:`_shape_map_condensed_sqdist`
     rather than left to scipy, which computes them single-threaded. Measured at
@@ -955,16 +1012,19 @@ def _shape_map_linkage_matrix(Xk):
     """
     from scipy.cluster.hierarchy import linkage
 
+    method = str(method or _CLUSTERING_WARD).lower()
+    if method not in _CLUSTERING_TREE:
+        raise ValueError(f"not a linkage method: {method!r}")
     n = int(Xk.shape[0])
     cap = _shape_map_ward_max_points()
     if n > cap:
         raise WardTooLarge(
-            f"clustering=ward needs an N(N-1)/2 distance matrix and is capped at "
+            f"clustering={method} needs an N(N-1)/2 distance matrix and is capped at "
             f"{cap} points; this map has {n}. Raise "
             f"HOOPS_AI_SHAPE_MAP_WARD_MAX_POINTS if this machine has the memory "
             f"for it, or use clustering=kmeans."
         )
-    return linkage(_shape_map_condensed_sqdist(Xk), method="ward")
+    return linkage(_shape_map_condensed_sqdist(Xk), method=method)
 
 
 def _shape_map_run_ward(linkage_z, k) -> "Any":
@@ -1055,9 +1115,11 @@ def _shape_map_parent_agg(
 
 def _shape_map_parent_linkage(
     name, path_key, mtime_ns, tag_filter, tag_keep, kind, tags_etag,
+    method: str = _CLUSTERING_WARD,
 ):
-    """The Ward tree of the UNDRILLED map, as ``(tree, parent_agg)``.
+    """The linkage tree of the UNDRILLED map, as ``(tree, parent_agg)``.
 
+    *method* is the linkage rule (:data:`_CLUSTERING_TREE`), defaulting to Ward.
     ``parent_agg`` is the whole cached aggregate entry -- ``file_ids``,
     ``coords``, ``agg``, ``filemeta``, ``tags_map`` -- and not just the ids,
     because a caller that walks the tree needs the rows it was built from
@@ -1090,23 +1152,27 @@ def _shape_map_parent_linkage(
     parent_agg_key, parent_agg = _shape_map_parent_agg(
         name, path_key, mtime_ns, tag_filter, tag_keep, kind, tags_etag,
     )
-
+    # The aggregate key identifies the ROWS; the linkage key has to identify
+    # the TREE, and two linkage rules over the same rows are two different
+    # trees. Without the method here, a tree built for Ward would be handed
+    # back for an average-linkage request and labelled as one.
+    linkage_key = _shape_map_linkage_cache_key(parent_agg_key, method)
     with _shape_map_cache_mutex:
-        tree = _shape_map_linkage.get(parent_agg_key)
+        tree = _shape_map_linkage.get(linkage_key)
         if tree is not None:
-            _shape_map_linkage.move_to_end(parent_agg_key)
+            _shape_map_linkage.move_to_end(linkage_key)
 
     if tree is None:
         try:
             _shape_map_log_threads()
             # Outside the mutex: tens of seconds, and the cache lock must not
             # be held across it.
-            tree = _shape_map_linkage_matrix(parent_agg["agg"])
+            tree = _shape_map_linkage_matrix(parent_agg["agg"], method=method)
         except WardTooLarge:
             return None
         with _shape_map_cache_mutex:
-            _shape_map_linkage[parent_agg_key] = tree
-            _shape_map_linkage.move_to_end(parent_agg_key)
+            _shape_map_linkage[linkage_key] = tree
+            _shape_map_linkage.move_to_end(linkage_key)
             while len(_shape_map_linkage) > _SHAPE_MAP_LINKAGE_CACHE_MAX:
                 _shape_map_linkage.popitem(last=False)
 
@@ -2402,12 +2468,13 @@ def _shape_map_cluster(
     clustering = _normalize_map_clustering(clustering)
     k_req = int(n_clusters)
     assign_started = time.perf_counter()
-    if clustering == _CLUSTERING_WARD:
+    if clustering in _CLUSTERING_TREE:
         if ward_height is not None:
             # A height is the cut itself, so there is nothing to search for:
             # one fcluster call on whichever tree is in play.
             tree = ward_parent[0] if ward_parent is not None else (
-                linkage_z if linkage_z is not None else _shape_map_linkage_matrix(Xk)
+                linkage_z if linkage_z is not None
+                else _shape_map_linkage_matrix(Xk, method=clustering)
             )
             rows = ward_parent[1] if ward_parent is not None else None
             assign = _shape_map_run_ward_at_height(tree, ward_height, rows)
@@ -2422,7 +2489,9 @@ def _shape_map_cluster(
             if ward_parent is not None:
                 assign = _shape_map_ward_descend(ward_parent[0], ward_parent[1], k)
             if assign is None:
-                tree = linkage_z if linkage_z is not None else _shape_map_linkage_matrix(Xk)
+                tree = linkage_z if linkage_z is not None else _shape_map_linkage_matrix(
+                    Xk, method=clustering
+                )
                 assign = _shape_map_run_ward(tree, k)
         # maxclust returns AT MOST k clusters, and descending a parent node can
         # overshoot k on tied merge distances, so the count that is reported --
@@ -3137,7 +3206,7 @@ def compute_index_shape_map(
 
         tree = None
         ward_parent = None
-        if clustering == _CLUSTERING_WARD:
+        if clustering in _CLUSTERING_TREE:
             # A drill-down should walk DOWN the hierarchy, not start a new one.
             # When the subset is a node of the parent's tree, cut that tree
             # deeper instead of building one over the subset -- which is both
@@ -3151,6 +3220,7 @@ def compute_index_shape_map(
             if subset_ids is not None:
                 parent = _shape_map_parent_linkage(
                     name, path_key, mtime_ns, tag_filter, tag_keep, kind, tags_etag,
+                    method=clustering,
                 )
                 if parent is not None:
                     rows = _shape_map_ward_subset_node(
@@ -3170,10 +3240,13 @@ def compute_index_shape_map(
                         )
             if ward_parent is None:
                 linkage_started = time.perf_counter()
+                # Keyed by the rows AND the linkage rule; see
+                # _shape_map_linkage_cache_key.
+                linkage_key = _shape_map_linkage_cache_key(agg_key, clustering)
                 with _shape_map_cache_mutex:
-                    tree = _shape_map_linkage.get(agg_key)
+                    tree = _shape_map_linkage.get(linkage_key)
                     if tree is not None:
-                        _shape_map_linkage.move_to_end(agg_key)
+                        _shape_map_linkage.move_to_end(linkage_key)
                 if tree is None:
                     _shape_map_log_threads()
                     rss_before = _shape_map_rss_mb()
@@ -3182,13 +3255,13 @@ def compute_index_shape_map(
                     # two requests that differ only in projection can both arrive
                     # here and build the same tree; that is wasteful but correct,
                     # and far cheaper than a second lock.
-                    tree = _shape_map_linkage_matrix(agg_entry["agg"])
+                    tree = _shape_map_linkage_matrix(agg_entry["agg"], method=clustering)
                     rss_after = _shape_map_rss_mb()
                     if rss_before is not None and rss_after is not None:
                         timing.note("rss", f"{rss_before:.0f}MB->{rss_after:.0f}MB")
                     with _shape_map_cache_mutex:
-                        _shape_map_linkage[agg_key] = tree
-                        _shape_map_linkage.move_to_end(agg_key)
+                        _shape_map_linkage[linkage_key] = tree
+                        _shape_map_linkage.move_to_end(linkage_key)
                         while len(_shape_map_linkage) > _SHAPE_MAP_LINKAGE_CACHE_MAX:
                             _shape_map_linkage.popitem(last=False)
                     timing.add(
@@ -3208,7 +3281,7 @@ def compute_index_shape_map(
         # cut landed rather than only what was asked for.
         ward_height = None
         ward_band = None
-        if clustering == _CLUSTERING_WARD and granularity is not None:
+        if clustering in _CLUSTERING_TREE and granularity is not None:
             cut_started = time.perf_counter()
             cut_tree = ward_parent[0] if ward_parent is not None else tree
             cut_rows = ward_parent[1] if ward_parent is not None else None
@@ -3241,11 +3314,12 @@ def compute_index_shape_map(
             ward_height=ward_height,
             timings=cluster_timings,
         )
-        # The assignment belongs to whichever algorithm ran: for Ward it is the
-        # fcluster pass, which is part of cutting the tree; for k-means it is
-        # the fit itself, and k-means has no linkage or cut to report.
+        # The assignment belongs to whichever algorithm ran: for a linkage tree
+        # it is the fcluster pass, which is part of cutting the tree; for
+        # k-means it is the fit itself, and k-means has no linkage or cut to
+        # report.
         assign_seconds = float(cluster_timings.get("assign", 0.0))
-        if clustering == _CLUSTERING_WARD:
+        if clustering in _CLUSTERING_TREE:
             timing.add("cut", assign_seconds)
         else:
             timing.add("kmeans", assign_seconds, _STAGE_MISS)
@@ -3291,8 +3365,14 @@ def compute_index_shape_map_tree(
     kind: str = "any",
     only_file_ids: Optional[list[str]] = None,
     k_max: int = _SHAPE_MAP_WARD_K_MAX,
+    clustering: str = _CLUSTERING_WARD,
 ) -> dict[str, Any]:
-    """Ward's hierarchy for *name*, folded to the levels a tree view can show.
+    """The agglomerative hierarchy for *name*, folded to the levels a tree view can show.
+
+    *clustering* names the linkage rule and must be one of
+    :data:`_CLUSTERING_TREE`; it defaults to Ward, the only one there was when
+    this route was written. Anything else -- k-means included -- raises
+    ``ValueError``, because there is no tree to fold.
 
     The population is chosen exactly as ``/map`` chooses it -- the same tag
     filter (*tags* / *tag_mode* / *tagged*), the same *kind*, the same explicit
@@ -3320,6 +3400,12 @@ def compute_index_shape_map_tree(
     import numpy as np
 
     _validate_index_name(name)
+    clustering = _normalize_map_clustering(clustering)
+    if clustering not in _CLUSTERING_TREE:
+        raise ValueError(
+            "a tree exists only for an agglomerative clustering: pass "
+            "clustering='ward' or clustering='average'."
+        )
     # Total only, with the one cache that matters here -- the linkage -- named
     # as hit or miss. A tree request that is slow is a tree request that had to
     # build the linkage; there is no other tens-of-seconds step.
@@ -3339,20 +3425,24 @@ def compute_index_shape_map_tree(
     # The key _shape_map_parent_linkage will look under, rebuilt here so the
     # log can say whether the tree was already there without that helper
     # having to report it.
-    linkage_key = (
-        path_key, mtime_ns, _shape_map_subset_sig(tag_filter, kind, None),
-        tags_etag if tag_filter else "",
+    linkage_key = _shape_map_linkage_cache_key(
+        (
+            path_key, mtime_ns, _shape_map_subset_sig(tag_filter, kind, None),
+            tags_etag if tag_filter else "",
+        ),
+        clustering,
     )
     with _shape_map_cache_mutex:
         linkage_state = _STAGE_HIT if linkage_key in _shape_map_linkage else _STAGE_MISS
 
     bundle = _shape_map_parent_linkage(
         name, path_key, mtime_ns, tag_filter, tag_keep, kind, tags_etag,
+        method=clustering,
     )
     if bundle is None:
         raise WardTooLarge(
-            "This map has more points than Ward's hierarchy can be built on "
-            "here, so there is no tree to show."
+            "This map has more points than an agglomerative hierarchy can be "
+            "built on here, so there is no tree to show."
         )
     tree, agg_entry = bundle
 
@@ -3397,8 +3487,8 @@ def compute_index_shape_map_tree(
     timing.note("n", len(member_file_ids))
     timing.note("k_max", effective_k_max)
     logger.info(
-        "[SHAPEMAP] '%s' ward tree built in %.2fs (linkage %s, %s)",
-        name, timing.total(), linkage_state, timing.render(),
+        "[SHAPEMAP] '%s' %s tree built in %.2fs (linkage %s, %s)",
+        name, clustering, timing.total(), linkage_state, timing.render(),
     )
     return {
         "index": name,
@@ -3825,8 +3915,14 @@ def compute_index_catalogue(
     tags: Optional[list[str]] = None,
     tag_mode: str = "any",
     tagged: Optional[bool] = None,
+    clustering: str = _CLUSTERING_WARD,
 ) -> dict[str, Any]:
-    """The cohesion frontier of *name*'s Ward tree, with each group's members.
+    """The cohesion frontier of *name*'s agglomerative tree, with each group's members.
+
+    *clustering* names the linkage rule the tree is built with (see
+    :func:`compute_index_shape_map_tree`) and defaults to Ward. It is part of
+    the cache key: a catalogue cut from an average-linkage tree names different
+    nodes, so it cannot share an entry with Ward's.
 
     Walks down from the root and stops each branch at the first node whose
     cohesion reaches *threshold*; branches that never get there end at their
@@ -3887,6 +3983,7 @@ def compute_index_catalogue(
     than Ward can be run on here.
     """
     _validate_index_name(name)
+    clustering = _normalize_map_clustering(clustering)
     faiss_path = index_registry._index_faiss_path(name)
     if not faiss_path.exists():
         raise KeyError(f"Index '{name}' does not exist.")
@@ -3904,7 +4001,9 @@ def compute_index_catalogue(
     # would be served straight back to the user who had just caused it.
     result_key = (
         path_key, mtime_ns, subset_sig, tags_etag,
-    ) + _catalogue_signature(threshold, k_max, min_parts, min_reached_parts)
+    ) + _shape_map_clustering_signature(clustering) + _catalogue_signature(
+        threshold, k_max, min_parts, min_reached_parts
+    )
 
     with _shape_map_cache_mutex:
         cached = _catalogue_results.get(result_key)
@@ -3921,6 +4020,7 @@ def compute_index_catalogue(
         kind=kind,
         only_file_ids=None,
         k_max=k_max,
+        clustering=clustering,
     )
     nodes = list(tree["nodes"])
     total = int(tree["count"])
@@ -4579,7 +4679,7 @@ def compute_index_shape_map_scs(
         # group can escape it. Ward + Colour by Tag is deliberately NOT included:
         # it draws no tree, so the tag colours baked here are the final ones.
         neutral = (
-            _normalize_map_clustering(clustering) == "ward" and color_by == "cluster"
+            _shape_map_tree_clustering(clustering) and color_by == "cluster"
         )
         for g in payload["groups"]:
             off = int(g["offset"])

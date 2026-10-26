@@ -338,7 +338,7 @@ class ShapeMapTreeEndpointTests(unittest.TestCase):
         self.assertIsNone(body["nodes"][2]["cohesion"])
         mock_fn.assert_called_once_with(
             "tmcad", tags=None, tag_mode="any", tagged=None, kind="any",
-            only_file_ids=None, k_max=8,
+            only_file_ids=None, k_max=8, clustering="ward",
         )
 
     def test_k_max_out_of_range_is_422(self):

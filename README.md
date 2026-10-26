@@ -554,18 +554,34 @@ selectable as well (see
 [Optional: the UMAP layout](#optional-the-umap-layout)).
 
 The toolbar's **Clustering** selector chooses how the parts are grouped: k-means
-(the default) or Ward. Both run on the full-dimensional vectors, so neither
-moves a point -- they decide only which cluster a part belongs to. The
+(the default), Ward or Average. All three run on the full-dimensional vectors,
+so none of them moves a point -- they decide only which cluster a part belongs
+to. The
 difference is that Ward builds one agglomerative tree and cuts it at the
 requested count, so a larger count **subdivides** the clusters a smaller one
-produced rather than partitioning the parts afresh. Measured on 7,928 parts at
+produced rather than partitioning the parts afresh. Average linkage (UPGMA)
+builds the same kind of tree from the same distances and differs only in the
+merge rule: Ward joins whichever pair adds least to the within-cluster
+variance, which prefers compact clusters of similar size, while Average joins
+on the mean distance between members. Textbook advice is that this makes
+Average more tolerant of long thin families that Ward tends to cut in half; on
+this data it does not work out that way. Over 7,928 parts cut at a maximum of
+2,048 clusters, Ward's catalogue finds 300 families that pass a 0.95 cohesion
+threshold and cover 4,098 parts, against Average's 125 families covering 2,013.
+More telling is what each leaves unresolved: Ward's largest mixed branch holds
+14 parts, Average's holds 237, and the tree shows why -- at the third level
+Average still has 7,863 of the 7,928 parts in a single node, which is the
+signature of chaining. Average is kept as a selectable option so that the
+comparison can be reproduced rather than taken on trust. **Ward is the one to
+use.** Measured on 7,928 parts at
 2,048 dimensions, the tree takes about 40 seconds to build and is then cut in a
 couple of milliseconds at any count, so sweeping the cluster count is faster
 under Ward than under k-means once the first build is done. It needs no extra
 dependency: `scipy` is already required. Very large indexes are refused rather
 than attempted -- the tree needs an N x N distance matrix -- and the cap is
 `HOOPS_AI_SHAPE_MAP_WARD_MAX_POINTS` (default 20,000). Drill in follows the
-hierarchy while Ward is selected: instead of clustering the subset afresh, the
+hierarchy while Ward or Average is selected: instead of clustering the subset
+afresh, the
 server cuts the same tree lower down, so the clusters inside a drill-down are
 an exact refinement of the one that was drilled.
 
@@ -608,7 +624,7 @@ that cluster is drawn as a model, in full, without hiding anything else. A
 pinned cluster is taken whole or not at all, so a family is never shown
 half-way. **Unpin all** returns to the ordinary spread of representatives.
 
-The **Catalogue** tab cuts the Ward tree into families at one cohesion
+The **Catalogue** tab cuts the Ward (or Average) tree into families at one cohesion
 threshold (`POST /similarity/index/{name}/map/catalogue`) and shows one tile per
 family. **Order** sorts the tiles by tree order or by part count — a client-side
 sort of what is already loaded, so it costs no request. The ticked families can
@@ -1420,8 +1436,12 @@ The map stages warm exactly the population the web client asks for on a fresh
 page (parts only, 3-D, coloured by cluster, PCA projection, tags included, and
 the cluster count the index's own part count implies), because the map is
 cached per parameter set: warming anything else warms a cache key no request
-will hit. Both clusterings are warmed — k-means and Ward — since each is a
-separate cache key, and the finest cluster count Ward's tree descends to is
+will hit. Two of the three clusterings are warmed by default — k-means and Ward —
+since each is a separate cache key. Average is accepted by
+`HOOPS_AI_WARMUP_CLUSTERING` but left cold: it is there to be compared
+against Ward rather than used daily, so a third build at every startup is
+not worth paying for, and the user who selects it waits once instead. The
+finest cluster count Ward's tree descends to is
 worked out per index from its part count, about 32 parts to a cluster (tmcad's
 7,928 single parts give 256). That is the same number `/index/{name}/stats`
 hands the client as `default_clusters`, for both k-means' **Clusters (k)** and

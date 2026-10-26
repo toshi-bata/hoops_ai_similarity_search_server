@@ -355,10 +355,14 @@ def warmup_indexes_setting() -> list[str]:
 # The stages _warmup_one() knows how to run, in the order it runs them.
 _WARMUP_STAGES = ("assembly", "map", "scs", "searcher")
 
-# The clusterings stage 2/2b can warm, and the default list. Both of them:
-# each is a separate cache key, so a user who switches to the one that was not
-# warmed waits for a full build (about 15 s on an 8,000-part index).
-_WARMUP_CLUSTERINGS = ("kmeans", "ward")
+# The clusterings stage 2/2b can warm, and the default list. Each is a
+# separate cache key, so a user who switches to one that was not warmed waits
+# for a full build (about 15 s on an 8,000-part index).
+#
+# "average" is accepted but NOT warmed by default: it is the newest of the
+# three and is there to be compared against Ward, so an operator who wants it
+# hot asks for it rather than paying for a third build at every startup.
+_WARMUP_CLUSTERINGS = ("kmeans", "ward", "average")
 _WARMUP_CLUSTERINGS_DEFAULT = ("kmeans", "ward")
 
 
@@ -398,10 +402,10 @@ def warmup_stages_setting() -> list[str]:
 def warmup_clustering_setting() -> list[str]:
     """Which clusterings the map stages warm, from HOOPS_AI_WARMUP_CLUSTERING.
 
-    A comma-separated list naming ``kmeans``, ``ward``, or both -- and both is
-    the default; an empty or unrecognised value falls back to it. Each
-    clustering is a separate cache key and a separate build, so a user who
-    switches to the
+    A comma-separated list naming ``kmeans``, ``ward`` or ``average``. The
+    default is ``kmeans,ward``; an empty or unrecognised value falls back to
+    it. Each clustering is a separate cache key and a separate build, so a user
+    who switches to the
     one that was not warmed pays for the whole thing: measured at about 15 s on
     an 8,000-part index (11.8 s for the map, 1.6 s for the folded tree, 1.0 s
     for the point cloud). Warming the pair costs about 5 s more at startup now

@@ -1359,11 +1359,15 @@ def index_shape_map(
     clustering: str = Query(
         "kmeans",
         description=(
-            "Clustering algorithm: 'kmeans' (the default) or 'ward'. Ward is "
-            "hierarchical, so a larger k is an exact refinement of a smaller "
-            "one -- raising the count splits the families already on screen "
-            "instead of redrawing them. Returns 400 when 'ward' is asked for "
-            "on a map with more points than it can be run on."
+            "Clustering algorithm: 'kmeans' (the default), 'ward' or "
+            "'average'. The last two are agglomerative, so a larger k is an "
+            "exact refinement of a smaller one -- raising the count splits the "
+            "families already on screen instead of redrawing them. They differ "
+            "in the merge rule: Ward minimises the growth in within-cluster "
+            "variance and so prefers compact clusters of similar size, while "
+            "average (UPGMA) merges on the mean distance between members and "
+            "tolerates elongated families. Returns 400 when either is asked "
+            "for on a map with more points than it can be run on."
         ),
     ),
     granularity: Optional[float] = Query(
@@ -1385,11 +1389,11 @@ def index_shape_map(
         ge=2,
         le=4096,
         description=(
-            "Only for clustering='ward': the ceiling the granularity scale is "
-            "read against, so granularity=1.0 means this many clusters (or the "
-            "population, when it is smaller). Meaningless for k-means. Must be "
-            "the same value /map/tree is given as k_max: the tree's leaves and "
-            "the map's clusters are otherwise no longer one for one, and the "
+            "Only for a tree clustering (ward or average): the ceiling the "
+            "granularity scale is read against, so granularity=1.0 means this "
+            "many clusters (or the population, when it is smaller). "
+            "Meaningless for k-means. Must be "
+            "the same value /map/tree is given as k_max: the tree's leaves and "            "the map's clusters are otherwise no longer one for one, and the "
             "tree's colours, checkboxes and tagging all rest on that match. "
             "The ceiling is 4096 on all three routes together: the UI sends "
             "one Max clusters value to /map, /map/scs and /map/tree, so a "
@@ -1619,9 +1623,18 @@ def index_shape_map_tree(
             "ceiling of its own, so this is a validation bound only."
         ),
     ),
+    clustering: Literal["ward", "average"] = Query(
+        "ward",
+        description=(
+            "Which linkage builds the tree -- the same value /map is given. "
+            "There is no tree for 'kmeans', so it is not accepted here: a "
+            "hierarchy is what this route returns. Must match the map on "
+            "screen, or the node ids name families the map is not drawing."
+        ),
+    ),
     body: Optional[ShapeMapRequest] = Body(None),
 ):
-    """Ward's hierarchy for an index's parts, folded to a handful of levels.
+    """The agglomerative hierarchy for an index's parts, folded to a handful of levels.
 
     No projection, colouring, cluster count or granularity is taken: a
     hierarchy has neither coordinates nor a legend, and the same tree answers
@@ -1645,6 +1658,7 @@ def index_shape_map_tree(
             kind=kind,
             only_file_ids=(body.only_file_ids if body else None),
             k_max=k_max,
+            clustering=clustering,
         )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -1736,6 +1750,15 @@ def index_catalogue(
     tagged: Optional[bool] = Query(
         None, description="true = only tagged parts, false = only untagged."
     ),
+    clustering: Literal["ward", "average"] = Query(
+        "ward",
+        description=(
+            "Which linkage builds the tree the frontier is cut from -- the "
+            "same value /map and /map/tree are given. The two linkages make "
+            "different families, which is the point of being able to ask for "
+            "either here."
+        ),
+    ),
 ):
     """Every family in an index, cut from the Ward tree at one cohesion.
 
@@ -1772,6 +1795,7 @@ def index_catalogue(
             tags=_split_tags(tags),
             tag_mode=tag_mode,
             tagged=tagged,
+            clustering=clustering,
         )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -1882,8 +1906,9 @@ def index_shape_map_scs(
         ge=2,
         le=4096,
         description=(
-            "Same as /map: only for clustering='ward', the ceiling the "
-            "granularity scale is read against, so granularity=1.0 means this "
+            "Same as /map: only for a tree clustering (ward or average), the "
+            "ceiling the granularity scale is read against, so "
+            "granularity=1.0 means this "
             "many clusters (or the population, when it is smaller). Must match "
             "the value /map was given, since it decides how many baked nodes "
             "there are, and the value /map/tree is given as k_max, or the "

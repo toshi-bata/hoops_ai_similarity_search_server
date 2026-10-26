@@ -234,7 +234,23 @@ const DEFAULT_MAP_CLUSTERING = 'kmeans';
 // client-id.js) and restore it when the controls are reset, which is also how
 // it is restored on a fresh page -- the initial index selection resets them.
 const MAP_CLUSTERING_KEY = 'hoops-ai.map.clustering';
-const MAP_CLUSTERINGS = ['kmeans', 'ward'];
+const MAP_CLUSTERINGS = ['kmeans', 'ward', 'average'];
+// The clusterings that build a tree, as opposed to k-means, which partitions
+// the points afresh for every count.
+const MAP_TREE_CLUSTERINGS = ['ward', 'average'];
+
+// Does the clustering currently chosen in the toolbar build a tree? Ward and
+// average linkage do; k-means does not. Written as a predicate rather than a
+// comparison with 'ward' because that comparison is exactly what was missed
+// when average linkage was added -- the control stayed on the k-means branch
+// and the deeper Max clusters values were unreachable.
+// This reads the <select> rather than shapeMap.getClustering(), unlike
+// catalogueWardActive(): the controls are laid out from the DOM, including
+// before the choice has reached the controller.
+function treeClusteringSelected() {
+  const el = document.getElementById('map-clustering');
+  return MAP_TREE_CLUSTERINGS.includes(el ? el.value : '');
+}
 
 // What the server's startup warmup makes hot, from /client-config; null when it
 // has not answered (yet) or warms nothing in particular.
@@ -504,8 +520,12 @@ const CATALOGUE_KINDS = {
   mixed: { label: 'Mixed', cls: 'catalogue-mixed' },
 };
 
+// Is a clustering with a tree on screen? The catalogue is a cut of that tree,
+// so it exists for Ward and average linkage alike and for neither k-means nor
+// no map at all.
 function catalogueWardActive() {
-  return Boolean(shapeMap && shapeMap.getClustering() === 'ward');
+  const c = shapeMap ? shapeMap.getClustering() : null;
+  return MAP_TREE_CLUSTERINGS.includes(c);
 }
 
 // Read a number out of one of the tab's inputs, falling back to its default
@@ -523,7 +543,7 @@ function renderCatalogueNote() {
   const el = document.getElementById('catalogue-note');
   if (!el) return;
   if (!state.indexName) el.textContent = 'Select an index first.';
-  else if (!catalogueWardActive()) el.textContent = 'Catalogue requires Ward clustering.';
+  else if (!catalogueWardActive()) el.textContent = 'Catalogue requires Ward or Average clustering.';
   else el.textContent = catalogueNote || 'Press Reload to build the catalogue.';
 }
 
@@ -782,7 +802,7 @@ function onCatalogueSelectionChange() {
       if (result.reason === 'tree-failed') {
         setCatalogueNote(`Could not load the tree: ${result.message}`);
       } else if (result.reason === 'not-ward') {
-        setCatalogueNote('Catalogue requires Ward clustering.');
+        setCatalogueNote('Catalogue requires Ward or Average clustering.');
       }
     })
     .catch(() => {});
@@ -916,7 +936,12 @@ async function loadCatalogue() {
   setCatalogueNote('Building the catalogue\u2026');
   try {
     const payload = await withLoading(() =>
-      api.shapeMapCatalogue(name, { threshold, kMax, kind: 'part', minParts, minReachedParts }),
+      api.shapeMapCatalogue(name, {
+        threshold, kMax, kind: 'part', minParts, minReachedParts,
+        // The catalogue is a cut of the tree on screen, so it has to be cut
+        // from the same linkage the map was clustered with.
+        clustering: shapeMap.getClustering(),
+      }),
     );
     catalogueGroups = Array.isArray(payload.groups) ? payload.groups : [];
     catalogueKMax = kMax;
@@ -1432,13 +1457,15 @@ function setMapControls() {
   // build runs, like every other control that starts one.
   document.getElementById('map-clustering-wrap').hidden = !inMap;
   document.getElementById('map-clustering').disabled = !inMap || mapBusy;
-  const isWard = document.getElementById('map-clustering').value === 'ward';
-  // Ward takes a height, not a count: show one control or the other, never
-  // both. #map-legend-controls already hides the whole block outside the map.
-  document.getElementById('map-clusters-wrap').hidden = isWard;
-  // Ward's counterpart, in the same place and under the same rule: the ceiling
-  // its tree descends to. Meaningless for k-means, which takes the count above.
-  document.getElementById('map-wardmax-wrap').hidden = !isWard;
+  const isTree = treeClusteringSelected();
+  // A tree is cut at a height, not asked for a count: show one control or the
+  // other, never both. #map-legend-controls already hides the whole block
+  // outside the map.
+  document.getElementById('map-clusters-wrap').hidden = isTree;
+  // The tree's counterpart, in the same place and under the same rule: the
+  // ceiling its tree descends to. Meaningless for k-means, which takes the
+  // count above.
+  document.getElementById('map-wardmax-wrap').hidden = !isTree;
   document.getElementById('map-wardmax').disabled = !inMap || mapBusy;
   // Part name search: offered under both clusterings -- the panel lists
   // families either way, so a named part has no other way in. Locked during a
@@ -1446,11 +1473,11 @@ function setMapControls() {
   document.getElementById('map-findpart-wrap').hidden = !inMap;
   document.getElementById('map-findpart').disabled = !inMap || mapBusy;
   // Outliers is a k-means tool too: it splits each cluster by distance from
-  // its centroid, which under Ward is what every node's cohesion already
+  // its centroid, which under a tree is what every node's cohesion already
   // reports. It would also stop the map's categories matching the tree's nodes
   // one for one, and that match is what the tree's colours, checkboxes and
-  // tagging are built on. Hidden under Ward, unchanged for k-means.
-  document.getElementById('map-outliers-wrap').hidden = isWard;
+  // tagging are built on. Hidden under Ward and average, unchanged for k-means.
+  document.getElementById('map-outliers-wrap').hidden = isTree;
   // The Part-size slider only applies to the 3D-model view; show it there only.
   const inModels = inMap && document.getElementById('map-display').value === 'models';
   document.getElementById('map-partscale-wrap').hidden = !inModels;
