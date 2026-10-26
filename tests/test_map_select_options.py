@@ -227,19 +227,33 @@ class MapTreeClusteringTests(unittest.TestCase):
 
 
 class MapClusteringStateTests(unittest.TestCase):
-    """Client state that belongs to one clustering must be keyed by it.
+    """Client state that belongs to one map must be keyed by that map.
 
     Here rather than in a file of its own because it is the same failure the
     rest of this module guards: a value the client knows about that one place
-    does not account for. Ward and average linkage cut trees of the same shape
-    at the same ceiling, so the server answers both with the same positional
-    node names (group_0000, group_0001, ...) naming different families. Any
-    client state keyed on those names alone is therefore shared between the
-    two, and the legend's checkboxes and the Similarity order were.
+    does not account for. The legend's checkboxes and the Similarity order were
+    keyed by the node names the server returned, and node_name is the
+    category's index (``group_0000``, ``group_0001``, ...) with nothing of its
+    content in it -- so the list says only how many categories there are, and
+    three different pairs of settings with equal counts shared one slot. They
+    are keyed by the REQUEST now, and the tests below hold that line.
 
     Source inspection, like test_main_js_never_compares_a_clustering_with_a
     _literal above: the behaviour needs a browser, the invariant does not.
     """
+
+    # Keys of the `params` object in load() that do NOT change which categories
+    # the server returns, and so are deliberately absent from mapSignature.
+    # Anything added to `params` fails the test below until it is either put in
+    # the signature or listed here with its reason.
+    _NOT_IN_SIGNATURE = {
+        # A constant (MAP_DIMS). It fixes how many coordinates each point has,
+        # not how the points are grouped.
+        "dims",
+        # The clustering runs on the full-dimensional vectors, so the layout
+        # moves the points and leaves the categories exactly as they were.
+        "projection",
+    }
 
     def _function_body(self, source: str, opening: str) -> str:
         """The text from `opening` to the end of its brace-balanced block."""
@@ -255,17 +269,82 @@ class MapClusteringStateTests(unittest.TestCase):
                     return source[start:offset + 1]
         self.fail(f"{opening!r} is not brace-balanced in web/src/shape-map.js")
 
+    def _signature_source(self) -> str:
+        """mapSignature's array literal, comments stripped."""
+        source = _read("web/src/shape-map.js")
+        start = source.index("mapSignature = [")
+        end = source.index("].join('|')", start)
+        body = source[start:end]
+        return "".join(line.split("//", 1)[0] for line in body.splitlines())
+
+    def _params_keys(self) -> set:
+        """The keys of the `params` object literal load() sends to /map."""
+        source = _read("web/src/shape-map.js")
+        body = self._function_body(source, "const params = {")
+        keys = set()
+        for line in body.splitlines():
+            code = line.split("//", 1)[0]
+            # Top-level keys only: nested values are indented further, and the
+            # object is written one key per line at a fixed depth. The comma
+            # alternative catches shorthand properties (`nClusters,`).
+            match = re.match(r"^ {8}([A-Za-z_]\w*)\s*[:,]", code)
+            if match:
+                keys.add(match.group(1))
+        assert keys, "load()'s `params` object has no keys"
+        return keys
+
+    def test_every_map_parameter_is_in_the_signature_or_excused(self):
+        """A new request argument must be ruled in or out, not forgotten.
+
+        Each of the three bugs was one argument that changed the categories and
+        was not named. The point of this test is that the fourth cannot be
+        silent: adding a key to `params` fails here until someone decides.
+        """
+        signature = self._signature_source()
+        for key in sorted(self._params_keys() - self._NOT_IN_SIGNATURE):
+            with self.subTest(param=key):
+                self.assertIn(
+                    f"params.{key}",
+                    signature,
+                    f"load() sends `{key}` to /map but mapSignature does not "
+                    "name it. Either add it to the signature, or add it to "
+                    "_NOT_IN_SIGNATURE with the reason it cannot change which "
+                    "categories the server returns.",
+                )
+
     def test_the_legend_signature_carries_the_clustering(self):
+        """Named on its own, so the clustering going missing says so by name."""
+        self.assertIn(
+            "params.clustering",
+            self._signature_source(),
+            "mapSignature does not include the clustering, so Ward and Average "
+            "share one legendStateFor() slot: they cut trees of the same shape "
+            "at the same ceiling and nothing else in the signature differs.",
+        )
+
+    def test_the_legend_signature_is_not_built_from_the_response(self):
+        """node_name is the category's index; it identifies nothing."""
         source = _read("web/src/shape-map.js")
         body = self._function_body(source, "function renderLegend(groups) {")
-        signature = body[body.index("const signature = ["):body.index("].join('|')")]
-        # The entries are bare identifiers, so look for one on a line of its own.
+        code = "".join(line.split("//", 1)[0] for line in body.splitlines())
+        self.assertNotIn(
+            "node_name",
+            code[:code.index("const remembered")],
+            "renderLegend() is deriving its signature from the groups again. "
+            "node_name is f'group_{ci:04d}' on the server, so the list names "
+            "only how many categories there are: every two settings with the "
+            "same count would share one slot.",
+        )
+
+    def test_the_untagged_pin_is_named_by_a_sequence_number(self):
+        """Reload replaces the pin with nothing else in the signature moving."""
         self.assertIn(
-            "clustering,",
-            "".join(line.split("//", 1)[0] for line in signature.splitlines()),
-            "renderLegend()'s signature does not include the clustering, so Ward "
-            "and Average share one legendStateFor() slot: their node names are "
-            "the same positional list and cannot tell the two trees apart.",
+            "untaggedPinSeq",
+            self._signature_source(),
+            "mapSignature does not name untaggedPinSeq. The Untagged-only pin "
+            "is a bare list of file ids with no server-minted id, so Reload -- "
+            "which drops it and takes another over a smaller population -- "
+            "would otherwise produce the same signature as before.",
         )
 
     def test_set_clustering_discards_the_tree(self):

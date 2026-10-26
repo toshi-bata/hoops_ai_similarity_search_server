@@ -408,6 +408,13 @@ export function createShapeMap({
   // Reload, and whenever the population is redefined (the checkbox, the kind
   // filter, a new index). null means "ask the index".
   let untaggedPin = null;
+  // Counts how many pins have been taken. The pin is a list of file ids with no
+  // server-minted id of its own, so nothing else in the map signature names it:
+  // Reload drops the pin and takes another over a population that has lost the
+  // parts tagged since, with the clustering, the count, the kind and the
+  // colouring all unchanged. Without this counter the legend state from before
+  // the Reload would be restored onto the categories built after it.
+  let untaggedPinSeq = 0;
   // The search-results map: the overlaid models are the hits of the last
   // similarity search instead of a per-cluster sample. The point cloud
   // underneath is unchanged -- it is the k-means picture being compared
@@ -534,13 +541,16 @@ export function createShapeMap({
   // looking at one legend, and the order itself has to be fetched for each.
   let legendOrderMode = 'size';
   // legend signature -> the cluster id order the server returned for it. One
-  // map, one order: the signature already names the index, the kind, the
-  // colouring, the drill depth, the subset and the node names, so an entry can
-  // only be reused for the legend it was computed from.
+  // map, one order: the signature names the request the map was built from, so
+  // an entry can only be reused for the legend it was computed from.
   const legendOrders = new Map();
   // The signature renderLegend() is currently drawing, so the fetch that comes
   // back later can tell whether it still belongs to what is on screen.
   let legendOrderSignature = '';
+  // Which categories the map on screen shows, as a string. Set by load() from
+  // the request it is about to send, and read by renderLegend(); see the
+  // comment there for why it is not derived from the response.
+  let mapSignature = '';
   // The arguments the map on screen was built with. The order must be asked
   // for with the same ones, or it would describe a different clustering.
   let lastMapRequest = null;
@@ -2151,7 +2161,42 @@ export function createShapeMap({
       // for exactly these parts rather than for whatever is untagged by then.
       if (refreshesPopulation && untaggedNow && !level.fileIds) {
         untaggedPin = (mapData.points || []).map((p) => p.file_id).filter(Boolean);
+        untaggedPinSeq += 1;
       }
+      // Which categories this map shows, named by what was ASKED FOR. Built
+      // here rather than in renderLegend() so that the one place that decides
+      // what the server returns is also the place that says so.
+      //
+      // Set here, after the response, only because level.subsetId arrives with
+      // it; every other term is a request argument settled before the fetch.
+      //
+      // Included: everything in `params` that changes which categories come
+      // back, plus colorBy and the identity of onlyFileIds. Deliberately left
+      // out:
+      //   * dims -- a constant, MAP_DIMS.
+      //   * projection -- the clustering runs on the full-dimensional vectors,
+      //     so a layout moves the points and leaves the categories alone.
+      //   * includeTags -- adds a field to each point; it adds no category.
+      //   * the display mode (point cloud <-> 3D models) -- it is not a request
+      //     argument at all, and remembering across it is the entire reason
+      //     this state exists.
+      // onlyFileIds is named by its identity, never by its contents: a drill
+      // level by the subset id the server minted for it, and the Untagged-only
+      // pin by untaggedPinSeq, since it has no id of its own.
+      mapSignature = [
+        name,
+        colorBy,
+        params.clustering || 'kmeans',
+        params.kind,
+        params.nClusters,
+        params.outlierThreshold === undefined ? '' : params.outlierThreshold,
+        params.granularity === undefined ? '' : params.granularity,
+        params.wardMax === undefined ? '' : params.wardMax,
+        params.tagged === undefined ? '' : params.tagged,
+        drillStack.length,
+        level.subsetId || '',
+        pinned ? `pin${untaggedPinSeq}` : '',
+      ].join('|');
       // Report the cluster count the server actually used, and the Ward cut it
       // came from. It only means anything in cluster colouring, and neither is
       // required: the count is whatever the selector asked for, and Ward is now
@@ -3785,17 +3830,24 @@ export function createShapeMap({
   // The legend is rebuilt on every load(), including the View toggle (point
   // cloud <-> 3D models), which rebuilds the viewer but shows the SAME
   // categories. Dropping the checkboxes there threw away the user's filtering
-  // for no reason, so the state is remembered per signature: same index, kind,
-  // colour scheme, clustering, depth, subset and node names. Anything else --
-  // switching Cluster/Tag colouring, switching clustering, changing the cluster
-  // count, changing kind or index
-  // -- is a different set of categories and starts from the defaults, but it
-  // now gets its own slot instead of overwriting the one it displaced, so
-  // coming back to it restores what was there.
-  // The clustering is in there because the node names are not enough on their
-  // own: Ward and average linkage cut trees of the same shape at the same
-  // ceiling, so both answer with the same 'C1, C2, ...' naming different
-  // families, and the two shared one slot until the clustering was added.
+  // for no reason, so the state is remembered per signature (mapSignature,
+  // built in load()). The rule is one line: two maps may share legend state
+  // only when the server returns the same categories for both. The request
+  // decides that, so the request is what the signature is made of.
+  //
+  // It used to be made of the response instead -- the list of node names the
+  // groups came back with -- and that was wrong three times over, because
+  // node_name is f"group_{ci:04d}" on the server: the category's index, with
+  // nothing of its content in it. So the list says only HOW MANY categories
+  // there are, and any two settings with the same count shared one slot:
+  //   * Ward and average linkage, which cut trees of the same shape at the
+  //     same ceiling and so answer with the same list;
+  //   * k-means and Ward at the same cluster count;
+  //   * k-means at k=16 with Outliers on (which adds a seventeenth category)
+  //     and k-means at k=17 with Outliers off.
+  // Each was fixed by naming one more thing; the third made it clear that the
+  // response cannot identify what the request already does. Do not go back to
+  // deriving this from `groups`.
   // One category's identity: the checkbox, the swatch, the name, the count and
   // the cohesion. Built here rather than inside renderLegend() because Ward's
   // tree shows the SAME categories on its cut rows -- the legend is one row of
@@ -3992,23 +4044,7 @@ export function createShapeMap({
   }
 
   function renderLegend(groups) {
-    const signature = [
-      getIndexName ? getIndexName() : '',
-      kind,
-      colorBy,
-      // Ward and average linkage cut trees of the same shape at the same
-      // ceiling, so their node names are the same list -- 'C1, C2, ...' under
-      // one is 'C1, C2, ...' under the other, naming entirely different
-      // families. The names below cannot tell the two apart, so the clustering
-      // has to say so itself.
-      clustering,
-      // Drilling produces a different set of clusters even when the node names
-      // repeat (C1, C2, ...), so the depth belongs in the signature; without it
-      // the checkboxes would carry over onto unrelated categories.
-      drillStack.length,
-      drillTop().subsetId || '',
-      (groups || []).map((g) => g.node_name).join(','),
-    ].join('|');
+    const signature = mapSignature;
     const remembered = legendStateFor(signature);
     // The signature an order would belong to. Set before anything is drawn,
     // so the Order select built below asks about the legend it is part of.
