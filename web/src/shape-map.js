@@ -1532,6 +1532,24 @@ export function createShapeMap({
   // {names, row, key, centreFileId}. The menu shows that cluster on its own
   // for as long as it is open, so that an action is chosen against a picture
   // of what it will act on.
+  //
+  // An item may set `keepPeek: true`, and the rule for it is narrow:
+  //
+  //   * It is for an item that opens a PANEL OF ITS OWN and takes the hold
+  //     for itself -- in practice the tag items, whose tagParts() calls
+  //     holdPeek('tag'). Without it the preview blinks out between the menu
+  //     closing and the popover opening.
+  //
+  //   * It must NOT be set on an item that touches the model selection.
+  //     refreshModelSelection() works out what to add and remove by diffing
+  //     against `modelFileIds`, and the preview's models are in
+  //     `peekModelFileIds`, which that diff knows nothing about. Run with a
+  //     preview alive, it claims the preview's models as its own, and the
+  //     endPeek() that follows then unloads exactly the models the item had
+  //     just put on screen. That is how Pin parts broke; it is the same trap
+  //     the checkbox handler's "End any hover preview FIRST" comment records.
+  //     Isolate and Hide escaped it only because they call endPeek()
+  //     themselves.
   function openRowMenu(event, items, peek = null) {
     closeRowMenu();
     // Where the menu was raised, kept so an action that opens a panel of its
@@ -1551,23 +1569,31 @@ export function createShapeMap({
       if (item.disabled) button.disabled = true;
       if (item.title) button.title = item.title;
       button.addEventListener('click', () => {
-        // Hand the hold over rather than release it and let the item take it
-        // again: releasing runs endPeek(), so the isolated cluster would blink
-        // off and back on between the menu closing and the tag popover
-        // opening. Deferring the release to a timer would hide the blink too,
-        // but it leaves a window in which nobody owns the hold -- and the
-        // item's own code runs inside exactly that window. A handover has no
-        // such gap. The item either takes the token for itself, or it does
-        // not, and the line below ends the preview for everything that does
-        // not: Isolate, Hide, Show all and Drill in all act and return.
+        // The preview is held while the menu is open, and ended again BEFORE
+        // the chosen item runs -- except for an item that opens a panel of
+        // its own, which gets the hold handed to it.
+        //
+        // The handover is for the tag popover, and only for it. Releasing
+        // here and letting tagParts() take the hold again would run endPeek()
+        // in between, so the isolated cluster would blink off and back on
+        // under the popover that is asking the user to name it. Deferring the
+        // release to a timer would hide the blink too, but it leaves a window
+        // in which nobody owns the hold, and the item's own code runs inside
+        // exactly that window. A handover has no such gap.
+        //
+        // Everything else is released first. See `keepPeek` on the items
+        // themselves for why that is not an optimisation but a requirement.
         //
         // try/finally, with no catch: a hold left standing is not an error
         // anyone sees -- the hover preview simply stops working, silently and
         // for the rest of the session. The item's exception still propagates.
+        const keep = !!item.keepPeek;
         closeRowMenu({ keepPeek: true });
+        if (!keep) releasePeek('menu');
         try {
           item.run();
         } finally {
+          // Already released above, or handed to 'tag' -- either way a no-op.
           releasePeek('menu');
         }
       });
@@ -2068,6 +2094,8 @@ export function createShapeMap({
         }
         items.push({
           label: `Tag these ${node.count} parts\u2026`,
+          // The popover takes the hold for itself; see openRowMenu().
+          keepPeek: true,
           run: () => {
             const fileIds = [];
             for (const group of cats) fileIds.push(...groupFileIds(group));
@@ -4129,6 +4157,8 @@ export function createShapeMap({
         label: 'Tag\u2026',
         disabled: mapBusy,
         title: `Tag every part in ${group.label}`,
+        // The popover takes the hold for itself; see openRowMenu().
+        keepPeek: true,
         // Opens the shared tag picker where this menu is; the picker reports
         // what the write did, so there is nothing for the row to report.
         run: () => tagCluster(group),

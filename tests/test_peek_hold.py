@@ -113,10 +113,55 @@ class PeekHoldTests(unittest.TestCase):
         source = _read(_SHAPE_MAP)
         self.assertIn("holdPeek('menu')", _function_body(source, "function openRowMenu(event, items, peek = null) {"))
         self.assertIn("releasePeek('menu')", _function_body(source, "function closeRowMenu(options) {"))
-        self.assertIn(
-            "        } finally {\n          releasePeek('menu');\n        }",
+        self.assertRegex(
             source,
+            r"\} finally \{\n(?:\s*//[^\n]*\n)*\s*releasePeek\('menu'\);\n\s*\}",
         )
+
+    def test_the_preview_ends_before_an_ordinary_item_runs(self):
+        """An item that touches the model selection must not run with the
+        preview alive: refreshModelSelection() diffs against `modelFileIds`,
+        which does not include the preview's models, so it claims them and the
+        endPeek() that follows unloads what the item has just shown. That is
+        how Pin parts broke. Only the handover to the tag popover is allowed
+        to keep the hold, and the release has to come BEFORE item.run().
+        """
+        source = _read(_SHAPE_MAP)
+        release = source.index("if (!keep) releasePeek('menu');")
+        run = source.index("          item.run();")
+        self.assertLess(release, run)
+
+    def test_only_the_tag_items_keep_the_preview(self):
+        """`keepPeek` is for an item that opens a panel which takes the hold
+        for itself. Pin parts, Isolate, Hide, Show all, Heat map and Drill in
+        are not such items, and putting it on one of them is the Pin parts bug
+        again.
+        """
+        lines = _read(_SHAPE_MAP).splitlines()
+        labels = []
+        for i, line in enumerate(lines):
+            if "keepPeek: true" not in line:
+                continue
+            # Prose about the option is not a use of it.
+            if line.strip().startswith("//"):
+                continue
+            # The one that is not an item: the click handler always lets
+            # closeRowMenu() carry the hold over, and decides separately.
+            if "closeRowMenu(" in line:
+                continue
+            label = next(
+                (lines[j] for j in range(i, max(i - 8, -1), -1) if "label:" in lines[j]),
+                None,
+            )
+            self.assertIsNotNone(label, msg=f"line {i + 1}: keepPeek on no item")
+            labels.append(label.strip())
+        self.assertEqual(len(labels), 2, msg=f"expected the two tag items, got {labels}")
+        for label in labels:
+            with self.subTest(label=label):
+                self.assertTrue(
+                    label.startswith("label: 'Tag") or label.startswith("label: `Tag"),
+                    msg=f"{label} is not a tag item and must not keep the preview",
+                )
 
 
 class TagPopoverCloseTests(unittest.TestCase):
