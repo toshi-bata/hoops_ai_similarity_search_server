@@ -36,10 +36,16 @@ def _read(path: pathlib.Path) -> str:
 
 
 def _function_body(source: str, opening: str) -> str:
-    """The text of a function, from its opening line to its matching brace."""
+    """The text of a function, from its opening line to its matching brace.
+
+    Counting starts at the brace that opens the BODY, not at the start of the
+    signature: a destructured parameter with a default balances its own
+    braces, and counting from the signature would stop there and hand back
+    the first line alone.
+    """
     start = source.index(opening)
     depth = 0
-    for i in range(start, len(source)):
+    for i in range(start + len(opening) - 1, len(source)):
         if source[i] == "{":
             depth += 1
         elif source[i] == "}":

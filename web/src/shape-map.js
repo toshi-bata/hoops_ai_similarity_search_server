@@ -4048,9 +4048,10 @@ export function createShapeMap({
       // Four decimals for the same reason as the tree rows: 0.95 is a
       // decision boundary, and two decimals cannot tell 0.9499 from 0.9500.
       cohesion.textContent = group.cohesion.toFixed(4);
-      cohesion.title =
-        "Mean cosine similarity of this cluster's parts to its centre; " +
-        'lower means the cluster is mixed and worth drilling into';
+      // No tooltip. The tree rows already state the rule -- a tooltip over
+      // every row of a long list follows the pointer around and covers the
+      // rows being read -- and this shared builder was simply not following
+      // it. What the number means is on the Legend heading instead, once.
     }
     row.append(check, swatch, label, count);
     if (cohesion) row.appendChild(cohesion);
@@ -4065,7 +4066,10 @@ export function createShapeMap({
       const centre = document.createElement('span');
       centre.className = 'map-row-centre';
       centre.textContent = `\u00b7 ${centreName}`;
-      centre.title = `Centre part: ${centreName} (id ${String(centreId).slice(0, 8)})`;
+      // No tooltip here either, and the cost is accepted: when .map-row-centre
+      // is too narrow the name is ellipsed with no way left to read the rest
+      // of it. Hovering the row still highlights the centre part in 3D, so
+      // which part it is can still be found out, just not by reading.
       row.appendChild(centre);
     }
   }
@@ -4241,6 +4245,17 @@ export function createShapeMap({
     const title = document.createElement('div');
     title.className = 'map-legend-title';
     title.textContent = 'Legend';
+    // The one tooltip in the list, on the heading rather than on every row:
+    // it is read once, when the column is first met, and it does not follow
+    // the pointer down the rows afterwards.
+    //
+    // Known gap: the heading is only drawn below when the tree does not own
+    // the rows, so under Ward or Average with Cluster colouring there is
+    // nowhere to read this. The README explains cohesion, and that is not
+    // worth a second piece of UI here.
+    title.title =
+      "Cohesion is the mean cosine similarity of a cluster's parts to its "
+      + 'centre; lower means the cluster is mixed and worth drilling into.';
     // No rows follow when the tree owns them, and a heading over nothing reads
     // as a legend that failed to draw.
     if (!wardTree) scroll.appendChild(title);
