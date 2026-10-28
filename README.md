@@ -386,10 +386,11 @@ repository**. Download `hoops_license.h` for your account from the Tech Soft 3D
 Developer Zone and place it in `tools/scs_points/` first.
 
 **Windows** (the MSVC compiler from Build Tools for Visual Studio 2022; no IDE):
-```bat
+```powershell
 copy tools\scs_points\_win_env.bat.example tools\scs_points\_win_env.bat
-REM edit the SDK path, then:
-cd tools\scs_points && build.bat
+# edit the SDK path, then:
+cd tools\scs_points
+.\build.bat
 ```
 
 **Linux:**

@@ -386,10 +386,11 @@ npm run build
 `hoops_license.h` を取得し、`tools/scs_points/` に配置してください。
 
 **Windows**（Build Tools for Visual Studio 2022 の MSVC コンパイラのみ。IDE は不要）:
-```bat
+```powershell
 copy tools\scs_points\_win_env.bat.example tools\scs_points\_win_env.bat
-REM edit the SDK path, then:
-cd tools\scs_points && build.bat
+# edit the SDK path, then:
+cd tools\scs_points
+.\build.bat
 ```
 
 **Linux:**

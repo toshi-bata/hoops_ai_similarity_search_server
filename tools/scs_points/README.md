@@ -80,16 +80,16 @@ workload of **Build Tools for Visual Studio 2022** is enough. The Visual Studio
 IDE is not required (the HOOPS authoring libraries are MSVC-built static
 libraries linked with `/MD`, so MinGW is not an option).
 
-```
-copy _win_env.bat.example _win_env.bat   REM then edit the SDK path
-build.bat                                REM writes ..\..\bin\scs_points.exe
-build.bat clean                          REM removes build_win\ and the exe
+```powershell
+copy _win_env.bat.example _win_env.bat   # then edit the SDK path
+.\build.bat                              # writes ..\..\bin\scs_points.exe
+.\build.bat clean                        # removes build_win\ and the exe
 ```
 
-A plain Command Prompt is fine; there is no need to open a *Developer Command
-Prompt* first. `build.bat` locates the toolset with `vswhere` (which ships with
-every Visual Studio 2017+ installer, including the standalone Build Tools) and
-calls `vcvars64.bat` itself.
+An ordinary PowerShell or Command Prompt window is fine; there is no need to
+open a *Developer Command Prompt* first. `build.bat` locates the toolset with
+`vswhere` (which ships with every Visual Studio 2017+ installer, including the
+standalone Build Tools) and calls `vcvars64.bat` itself.
 
 > **Why there is no `.sln` any more.** Linux builds through a single Makefile.
 > Keeping a `.vcxproj` alongside a command line meant the correct set of

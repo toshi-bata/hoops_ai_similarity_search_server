@@ -70,6 +70,24 @@ REM   /bigobj /Zc:__cplusplus     - were in AdditionalOptions
 REM   /DUNICODE /D_UNICODE        - CharacterSet was Unicode
 REM The trailing \\ in /Fo is deliberate: a lone backslash before the closing
 REM quote would escape it for the compiler's own command-line parser.
+REM
+REM Libraries on the /link line:
+REM   sc / sc_utils / sc_utils_text / hps_core / zlib
+REM                               - the libsc authoring libraries themselves
+REM   kernel32 ... odbccp32       - the default Windows library set. The retired
+REM                                 project's AdditionalDependencies ended with
+REM                                 %(AdditionalDependencies), which MSBuild
+REM                                 expanded into exactly this list. Driving
+REM                                 cl.exe from the command line links only the
+REM                                 CRT, so the set has to be spelled out to
+REM                                 reproduce the link environment the project
+REM                                 had. Without it the build fails with
+REM                                 sc.lib(tc_io.obj) : error LNK2001:
+REM                                 unresolved external symbol
+REM                                 __imp_CommandLineToArgvW.
+REM                                 Do NOT trim this to the one library that
+REM                                 symbol comes from (shell32): the point is
+REM                                 the whole default set, not one export.
 if not exist "..\..\bin" mkdir "..\..\bin"
 if not exist "build_win\Release" mkdir "build_win\Release"
 
@@ -80,7 +98,9 @@ cl /nologo /std:c++17 /O2 /GL /EHsc /MD /W3 /bigobj /Zc:__cplusplus ^
    /Fe"..\..\bin\scs_points.exe" ^
    main.cpp ^
    /link /LTCG /LIBPATH:"%SC_ROOT%\lib\win64" ^
-   sc.lib sc_utils.lib sc_utils_text.lib hps_core.lib zlib.lib
+   sc.lib sc_utils.lib sc_utils_text.lib hps_core.lib zlib.lib ^
+   kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib ^
+   shell32.lib ole32.lib oleaut32.lib uuid.lib odbc32.lib odbccp32.lib
 if errorlevel 1 (
   echo BUILD FAILED.
   popd & exit /b 1
