@@ -231,10 +231,10 @@ export function createRegister({ getIndexName, onJobComplete }) {
   // the individual file action, and resubmit -- each caller resets the run UI
   // itself before invoking this, since they need control over what phase text
   // shows first (e.g. "Hashing…" or "Registering…").
-  async function queueAndFollow(name, fileIds, options, { embedFrom = 0, embedTo = 100 } = {}) {
+  async function queueAndFollow(name, fileIds, options, { embedFrom = 0, embedTo = 100, onSettled = null } = {}) {
     if (fileIds.length === 0) {
       setPhase('No files to register.', true);
-      return;
+      return false;
     }
     // Reserve this stretch of the overall bar for the embedding job so the
     // follow-up polling continues the same bar rather than restarting it.
@@ -248,10 +248,11 @@ export function createRegister({ getIndexName, onJobComplete }) {
       accepted = await api.createIndexJob(name, fileIds, options);
     } catch (err) {
       setPhase(describeError(err), true);
-      return;
+      return false;
     }
     setPhase('');
-    followJob(name, accepted.job_id);
+    followJob(name, accepted.job_id, onSettled);
+    return true;
   }
 
   async function runBulk() {
@@ -264,6 +265,7 @@ export function createRegister({ getIndexName, onJobComplete }) {
       return;
     }
     submitButton.disabled = true;
+    let queued = false;
     try {
       resetRunUi();
       const { fileIds, uploadErrors, invalidCount } = await uploadMissing(selectedFiles);
@@ -271,11 +273,33 @@ export function createRegister({ getIndexName, onJobComplete }) {
       if (uploadErrors.length) warnings.push(`${uploadErrors.length} file(s) could not be uploaded`);
       if (invalidCount) warnings.push(`${invalidCount} file(s) had an invalid id and were re-uploaded`);
       if (warnings.length) setPhase(`${warnings.join('; ')}; continuing with the rest.`);
-      await queueAndFollow(name, fileIds, options, { embedFrom: STAGE_QUEUE_END, embedTo: 100 });
+      queued = await queueAndFollow(name, fileIds, options, {
+        embedFrom: STAGE_QUEUE_END,
+        embedTo: 100,
+        // A run that reached the server must not be repeatable by pressing the
+        // button again: that would re-run the whole upload + register pass over
+        // the same files, which at ten thousand of them is not a small mistake.
+        // Clearing the selection is the whole mechanism -- the existing "no
+        // selection, no button" rule in setSelection() then keeps the button
+        // disabled, and the "N CAD file(s) selected." line clears with it, so
+        // no new state flag has to be kept in sync.
+        //
+        // 'done' is the signal because it is the only terminal status that
+        // means the files were actually registered. A job that ended 'failed'
+        // or 'canceled' puts the same selection back and the button returns:
+        // Resubmit only covers file ids the server marked retryable, so a
+        // cancelled run would otherwise have no way back.
+        onSettled: (job) => setSelection(job.status === 'done' ? [] : selectedFiles),
+      });
     } catch (err) {
       setPhase(describeError(err), true);
     } finally {
-      submitButton.disabled = selectedFiles.length === 0;
+      // Only give the button back when nothing was queued -- a failed upload,
+      // or a job the server refused. followJob() is deliberately not awaited,
+      // so reaching here does not mean the run is over; while a job is in
+      // flight the button stays disabled and onSettled decides what happens
+      // next.
+      submitButton.disabled = queued || selectedFiles.length === 0;
     }
   }
 
@@ -301,7 +325,7 @@ export function createRegister({ getIndexName, onJobComplete }) {
     cancelButton.textContent = job.cancel_requested ? 'Cancel requested' : 'Cancel';
   }
 
-  async function followJob(name, jobId) {
+  async function followJob(name, jobId, onSettled = null) {
     stopPolling();
     cancelButton.dataset.jobId = jobId;
     const tick = async () => {
@@ -314,7 +338,7 @@ export function createRegister({ getIndexName, onJobComplete }) {
       }
       renderProgress(job);
       if (TERMINAL.has(job.status)) {
-        await onJobSettled(name, job);
+        await onJobSettled(name, job, onSettled);
         return;
       }
       pollTimer = setTimeout(tick, POLL_MS);
@@ -322,7 +346,7 @@ export function createRegister({ getIndexName, onJobComplete }) {
     tick();
   }
 
-  async function onJobSettled(name, job) {
+  async function onJobSettled(name, job, onSettled = null) {
     stopPolling();
     progressBox.hidden = true;
     resultBox.hidden = false;
@@ -345,6 +369,11 @@ export function createRegister({ getIndexName, onJobComplete }) {
     if (retryableIds.length) {
       resubmitButton.textContent = `Resubmit ${retryableIds.length} retryable failure(s)`;
     }
+
+    // The run that queued this job decides what its own controls do now. Only
+    // runBulk() passes one; the Resubmit and "register the open file" paths
+    // own no selection, so they are left exactly as they were.
+    if (typeof onSettled === 'function') onSettled(job);
 
     // The report exists only once the job wrote one (report_url set). Fetch it
     // as text; a 404 just means there is nothing to show.

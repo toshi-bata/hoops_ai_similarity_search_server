@@ -1137,7 +1137,7 @@ DELETE /similarity/index/{name}/jobs/{job_id}       # ジョブをキャンセ�
 | `file_ids` | `string[]` | 既にストアにアップロード済みの CAD ファイルの `file_id`（標準的な経路）。 |
 | `zip_file_id` | `string` | 展開して登録する、アップロード済み ZIP アーカイブの `file_id`。 |
 | `server_paths` | `string[]` | **サーバーマシン上** のパス。オペレーターのシードのみ。`HOOPS_AI_ALLOW_SERVER_PATHS=true` でない限り **403** を返します。 |
-| `workers` | `int` | 並列埋め込みワーカー数。省略すると CPU コア数と空き RAM から自動でサイズ決定します（`HOOPS_AI_MAX_WORKERS`、既定 8 で上限）。 |
+| `workers` | `int` | 並列埋め込みワーカー数。省略すると CPU コア数と空き RAM から自動でサイズ決定します（`HOOPS_AI_MAX_WORKERS`、既定 12 で上限）。 |
 | `time_limit` | `int` | ファイルごとの埋め込み予算（秒）。省略すると `HOOPS_AI_EMBED_TIME_LIMIT`、それも無ければ SDK の 120 秒を使います。超過したファイルは `retryable=true` として報告されます。 |
 
 ジョブはすべての入力に対して1回の埋め込みパスを実行し、`job_id` を付けて即座に

@@ -1147,7 +1147,7 @@ tuning:
 | `file_ids` | `string[]` | `file_id`s of CAD files already uploaded to the store (the standard route). |
 | `zip_file_id` | `string` | `file_id` of an already-uploaded ZIP archive to expand and register. |
 | `server_paths` | `string[]` | Paths **on the server machine**. Operator seeding only; returns **403** unless `HOOPS_AI_ALLOW_SERVER_PATHS=true`. |
-| `workers` | `int` | Parallel embedding workers. Omit to size automatically from CPU cores and free RAM (capped by `HOOPS_AI_MAX_WORKERS`, default 8). |
+| `workers` | `int` | Parallel embedding workers. Omit to size automatically from CPU cores and free RAM (capped by `HOOPS_AI_MAX_WORKERS`, default 12). |
 | `time_limit` | `int` | Per-file embedding budget in seconds. Omit to use `HOOPS_AI_EMBED_TIME_LIMIT`, else the SDK's 120 s. Files that exceed it are reported with `retryable=true`. |
 
 The job runs one embedding pass over all inputs and returns immediately with a

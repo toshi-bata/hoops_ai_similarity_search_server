@@ -46,7 +46,7 @@ class IndexAddJobRequest(BaseModel):
         ge=1,
         description=(
             "Parallel embedding workers. Omit to size automatically from CPU "
-            "cores and free RAM (capped by HOOPS_AI_MAX_WORKERS, default 8). "
+            "cores and free RAM (capped by HOOPS_AI_MAX_WORKERS, default 12). "
             "For a retry job over heavy assemblies, use a small number."
         ),
     )

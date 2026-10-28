@@ -433,8 +433,16 @@ def _embed_error_detail(
 # the plateau rather than a single "best" value -- run-to-run noise exceeds the
 # difference between neighbouring counts.
 #
-# The default cap of 8 is a conservative floor chosen for an 8-core laptop with
-# heavy files. Raise HOOPS_AI_MAX_WORKERS on a large machine with light CAD.
+# The default cap of 12 is where both of those curves peaked: 12 on the 14-core
+# machine with light parts, and 12 on the 16-core machine with heavy assemblies.
+# It is a safety valve, not a target -- the physical core count and the free-RAM
+# bound are what normally decide, and the cap only starts to bite above 12
+# physical cores.
+#
+# The cap is not removed because "as many workers as cores" is measurably wrong
+# on the heavy corpus: 16, 20 and 24 workers were each slower than 8 there. A
+# host with more cores than that should be raised deliberately, after measuring
+# its own corpus, via HOOPS_AI_MAX_WORKERS.
 # The three variable names below are the ones hoops_ai and the bridge already
 # use, deliberately kept identical so one environment configures both.
 #
@@ -445,19 +453,45 @@ def _embed_error_detail(
 # -- that pool startup does not pay off for a few files -- is also weak, since
 # the ~55-60 s startup measured here was for a 20-worker pool and scales with
 # the worker count. Set it if your corpus is uniformly light.
-_MAX_WORKERS_DEFAULT = 8
+_MAX_WORKERS_DEFAULT = 12
 _MODEL_FOOTPRINT_MB_DEFAULT = 2048
 _MIN_FILES_PARALLEL_DEFAULT = 1
 _HOST_RAM_RESERVE_BYTES = 2 * 1024 * 1024 * 1024
 
 
+def _physical_core_cap() -> tuple:
+    """Return ``(cores, measured)`` -- the physical core count where known.
+
+    ``logical // 2`` is only an approximation of the physical cores, and it is
+    wrong in both directions on real hardware: a CPU without SMT has logical ==
+    physical, so halving throws away half the machine, and on a P-core/E-core
+    split the ratio is not two either. ``psutil.cpu_count(logical=False)``
+    counts them instead, the same way hoops_ai_qt_sandbox's
+    ``detectPhysicalCores()`` (SimilarityIndexPanel.cpp) does.
+
+    This sharpens an approximation; it does not change the intent. psutil stays
+    optional here (it is not a declared dependency), so the old halving remains
+    the fallback when it is missing or reports nothing usable.
+    """
+    try:
+        import psutil
+
+        physical = psutil.cpu_count(logical=False)
+        if physical and int(physical) > 0:
+            return max(1, int(physical)), True
+    except Exception:
+        pass
+    logical = os.cpu_count() or 2
+    return max(1, logical // 2), False
+
+
 def compute_auto_workers(file_count: int) -> int:
     """Choose a worker count for *file_count* files.
 
-    ``min(HOOPS_AI_MAX_WORKERS, logical_cpus / 2, usable_RAM / model_footprint,
-    file_count)``. Half the logical CPUs approximates the physical/performance
-    cores and avoids E-core and SMT oversubscription; never exceeding the file
-    count keeps idle workers from paying the checkpoint load for nothing.
+    ``min(HOOPS_AI_MAX_WORKERS, physical_cores, usable_RAM / model_footprint,
+    file_count)``. Physical cores rather than logical ones avoids E-core and SMT
+    oversubscription; never exceeding the file count keeps idle workers from
+    paying the checkpoint load for nothing.
 
     This is only consulted when the caller passes no explicit worker count. An
     explicit value is forwarded to the SDK unchanged, cap included -- the caps
@@ -467,12 +501,13 @@ def compute_auto_workers(file_count: int) -> int:
     across all logical cores): that oversubscribes RAM, and on this corpus a
     20-worker run was ~2x slower per file than the bridge's 12.
 
-    The ``core_cap`` below (``logical // 2``) already approximates the physical
-    cores, which is the measured throughput optimum once ``HOOPS_AI_INTRAOP_THREADS``
-    pins each worker to one intra-op thread (see :func:`intraop_threads`). To
-    actually reach that many workers on a large host, raise
-    ``HOOPS_AI_MAX_WORKERS`` -- its default of 8 is a conservative floor, kept so
-    an 8-core laptop with heavy files is not oversubscribed by default.
+    The physical core count is the measured throughput optimum once
+    ``HOOPS_AI_INTRAOP_THREADS`` pins each worker to one intra-op thread (see
+    :func:`intraop_threads`), so it is normally what decides -- together with the
+    free-RAM bound. ``HOOPS_AI_MAX_WORKERS`` defaults to 12 because that is where
+    both measured curves peaked (light parts on 14 cores, heavy assemblies on
+    16); it is a safety valve against the heavy corpus getting slower past that
+    point, and only bites on a host with more than 12 physical cores.
     """
     max_workers = _env_int("HOOPS_AI_MAX_WORKERS", _MAX_WORKERS_DEFAULT, minimum=1)
     model_mb = _env_int(
@@ -484,8 +519,7 @@ def compute_auto_workers(file_count: int) -> int:
     if file_count < min_parallel:
         return 1
 
-    logical = os.cpu_count() or 2
-    core_cap = max(1, logical // 2)
+    core_cap, cores_measured = _physical_core_cap()
 
     ram_cap = max_workers
     ram_bound = False
@@ -507,10 +541,15 @@ def compute_auto_workers(file_count: int) -> int:
 
     # Free RAM is sampled at job start and fluctuates -- a preceding job's
     # workers may not have been reclaimed yet -- so a surprisingly low count
-    # must be explainable from the log rather than looking arbitrary.
+    # must be explainable from the log rather than looking arbitrary. The
+    # cores= field says which of the two sources it came from, because a
+    # psutil-less host silently halves its logical count and the resulting
+    # worker count is otherwise indistinguishable from a measured one.
     logger.info(
-        "[EMBED] auto workers=%d (cap=%d, cores=%d, ram=%s, files=%d)",
-        chosen, max_workers, core_cap, ram_cap if ram_bound else "n/a", file_count,
+        "[EMBED] auto workers=%d (cap=%d, cores=%d(%s), ram=%s, files=%d)",
+        chosen, max_workers, core_cap,
+        "physical" if cores_measured else "approx",
+        ram_cap if ram_bound else "n/a", file_count,
     )
     if ram_bound and ram_cap <= 1 and min(max_workers, core_cap, file_count) > 1:
         logger.warning(

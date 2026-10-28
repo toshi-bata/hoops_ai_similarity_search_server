@@ -842,6 +842,25 @@ class TestWorkerSizing(unittest.TestCase):
         # raising or returning 0.
         self.assertGreaterEqual(core.compute_auto_workers(1000), 1)
 
+    def test_auto_workers_survives_a_missing_psutil(self):
+        # psutil is optional on purpose (it is not a declared dependency), and
+        # it is now asked for twice: once for the physical core count and once
+        # for free RAM. Blocking the import exercises both fallbacks -- the
+        # halved logical count and the "size by cores only" path -- which is
+        # the configuration most deployments without psutil actually run.
+        # The number itself is machine-dependent, so only the contract is
+        # asserted: a usable count, no exception.
+        saved = sys.modules.get("psutil", "absent")
+        sys.modules["psutil"] = None  # makes `import psutil` raise ImportError
+        try:
+            self.assertGreaterEqual(core.compute_auto_workers(1000), 1)
+            self.assertEqual(core.compute_auto_workers(1), 1)
+        finally:
+            if saved == "absent":
+                sys.modules.pop("psutil", None)
+            else:
+                sys.modules["psutil"] = saved
+
     def test_time_limit_defaults_to_sdk_default(self):
         self.assertEqual(core.embed_time_limit(), 0)
 
