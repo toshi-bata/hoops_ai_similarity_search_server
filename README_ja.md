@@ -389,7 +389,8 @@ npm run build
 `bin/scs_points[.exe]` を Web クライアントと同じ理由でローカルにビルドします。
 実行ファイルに HOOPS ライセンスキーがリンクされるため、**本リポジトリには
 含まれません**。先に Tech Soft 3D の Developer Zone から自分のアカウント用の
-`hoops_license.h` を取得し、`tools/scs_points/` に配置してください。
+`hoops_license.h` を取得し、`tools/scs_points/` に配置してください。リポジトリの
+ルートから実行します。
 
 **Windows**（Build Tools for Visual Studio 2022 の MSVC コンパイラのみ。IDE は不要）:
 ```powershell
@@ -415,6 +416,8 @@ make
 [`tools/scs_points/`](tools/scs_points/README.md) を参照してください。
 
 ### 5. サーバーの起動
+
+リポジトリのルートから実行します。
 
 **Windows:**
 ```bat

@@ -390,7 +390,8 @@ built, and it returns a message telling you to run the commands above. See
 `bin/scs_points[.exe]` is built locally for the same reason the web client is:
 it links a HOOPS license key into the executable, so it is **not part of the
 repository**. Download `hoops_license.h` for your account from the Tech Soft 3D
-Developer Zone and place it in `tools/scs_points/` first.
+Developer Zone and place it in `tools/scs_points/` first. From the repository
+root:
 
 **Windows** (the MSVC compiler from Build Tools for Visual Studio 2022; no IDE):
 ```powershell
@@ -416,6 +417,8 @@ returns **503**, so the client's Shape Map cannot draw its point cloud. See
 [`tools/scs_points/`](tools/scs_points/README.md) for details.
 
 ### 5. Start the server
+
+From the repository root:
 
 **Windows:**
 ```bat
