@@ -8,7 +8,7 @@ only this `README.md` and `.gitkeep` are tracked.
 
 | File | Platform | Produced by |
 | --- | --- | --- |
-| `scs_points.exe` | Windows | `tools/scs_points` (Visual Studio) |
+| `scs_points.exe` | Windows | `tools/scs_points` (build.bat) |
 | `scs_points` | Linux | `tools/scs_points` (make) |
 
 The server resolves these by fixed path (`<app_root>/bin/scs_points[.exe]`); the

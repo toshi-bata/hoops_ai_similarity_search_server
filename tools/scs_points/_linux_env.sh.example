@@ -6,7 +6,7 @@
 # HVISUALIZE_WEB_INSTALL_DIR points at the root of the HOOPS Visualize Web SDK
 # (the folder that contains authoring/libsc). The Makefile resolves headers and
 # libraries relative to this variable - the same variable name as the Windows
-# _VS2022.bat, so both platforms share one setting.
+# _win_env.bat, so both platforms share one setting.
 export HVISUALIZE_WEB_INSTALL_DIR=/path/to/Communicator/HOOPS_Visualize_Web_2026.2.0
 
 # Usage (plain Makefile, no Qt / no qmake):

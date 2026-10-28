@@ -378,7 +378,34 @@ npm run build
 利用できず、上記のコマンドを実行するよう促すメッセージを返します。詳細は
 [Web クライアント](#web-クライアント) を参照してください。
 
-### 4. サーバーの起動
+### 4. Shape Map 点群ツールのビルド
+
+`bin/scs_points[.exe]` を Web クライアントと同じ理由でローカルにビルドします。
+実行ファイルに HOOPS ライセンスキーがリンクされるため、**本リポジトリには
+含まれません**。先に Tech Soft 3D の Developer Zone から自分のアカウント用の
+`hoops_license.h` を取得し、`tools/scs_points/` に配置してください。
+
+**Windows**（Build Tools for Visual Studio 2022 の MSVC コンパイラのみ。IDE は不要）:
+```bat
+copy tools\scs_points\_win_env.bat.example tools\scs_points\_win_env.bat
+REM edit the SDK path, then:
+cd tools\scs_points && build.bat
+```
+
+**Linux:**
+```bash
+cp tools/scs_points/_linux_env.sh.example tools/scs_points/_linux_env.sh
+# edit the SDK path, then:
+cd tools/scs_points && source _linux_env.sh && make
+```
+
+このステップは任意ですが、Shape Map を使うなら必要です。ツールが無くても
+サーバーは起動し、API も `/map` も動作します — `/map/scs` だけが **503** を
+返すため、クライアントの Shape Map が点群を描けません。詳細は
+[Shape Map ポイントクラウド](#shape-map-ポイントクラウド) と
+[`tools/scs_points/`](tools/scs_points/README.md) を参照してください。
+
+### 5. サーバーの起動
 
 **Windows:**
 ```bat
@@ -593,7 +620,9 @@ GET /similarity/index/{name}/map/scs?color_by=cluster
 [`tools/scs_points/`](tools/scs_points/README.md) からビルドします。このツールは
 HOOPS Visualize Web のライセンスキーを必要とするため、**本リポジトリには含まれません**。
 ビルドして実行ファイルを `bin/`
-に配置してください。ツールが存在しない場合、`/map` は動作し続け、`/map/scs` のみが
+に配置してください。コマンドは
+[セットアップ](#セットアップ) の手順4「Shape Map 点群ツールのビルド」にあります。
+ツールが存在しない場合、`/map` は動作し続け、`/map/scs` のみが
 **503** を返します。生成されたファイルは `scs_map/` 配下に、
 `HOOPS_AI_SHAPE_MAP_SCS_CACHE_MAX`（既定 `32`）で設定される LRU 上限付きで
 キャッシュされます。

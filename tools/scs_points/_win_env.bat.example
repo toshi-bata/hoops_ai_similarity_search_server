@@ -1,0 +1,19 @@
+REM scs_points - Windows build environment.
+REM
+REM Copy this file to _win_env.bat (which is git-ignored) and edit the path.
+REM build.bat calls it automatically, so there is nothing to "source".
+REM
+REM HVISUALIZE_WEB_INSTALL_DIR points at the root of the HOOPS Visualize Web SDK
+REM (the folder that contains authoring\libsc) - the same variable name the Linux
+REM _linux_env.sh uses, so both platforms share one setting.
+SET HVISUALIZE_WEB_INSTALL_DIR=Path\to\Communicator\HOOPS_Visualize_Web_2026.2.0
+
+REM Usage (no Visual Studio IDE; the MSVC compiler from Build Tools is enough):
+REM   copy _win_env.bat.example _win_env.bat   REM then edit the path above
+REM   build.bat
+REM
+REM The built executable is placed at ..\..\bin\scs_points.exe (the server's bin\).
+REM
+REM IMPORTANT: build against the same HOOPS Visualize Web version the web viewer
+REM engine is pinned to (web/package.json: @ts3d-hoops/* = 2026.2.0). A newer libsc
+REM authors an SCS the 2026.2.0 engine cannot load ("Failed to load the map.").

@@ -378,7 +378,34 @@ still works without this step — only `/app/` is unavailable until the client i
 built, and it returns a message telling you to run the commands above. See
 [Web client](#web-client) for details.
 
-### 4. Start the server
+### 4. Build the Shape Map point-cloud tool
+
+`bin/scs_points[.exe]` is built locally for the same reason the web client is:
+it links a HOOPS license key into the executable, so it is **not part of the
+repository**. Download `hoops_license.h` for your account from the Tech Soft 3D
+Developer Zone and place it in `tools/scs_points/` first.
+
+**Windows** (the MSVC compiler from Build Tools for Visual Studio 2022; no IDE):
+```bat
+copy tools\scs_points\_win_env.bat.example tools\scs_points\_win_env.bat
+REM edit the SDK path, then:
+cd tools\scs_points && build.bat
+```
+
+**Linux:**
+```bash
+cp tools/scs_points/_linux_env.sh.example tools/scs_points/_linux_env.sh
+# edit the SDK path, then:
+cd tools/scs_points && source _linux_env.sh && make
+```
+
+This step is optional, but the Shape Map needs it. Without the tool the server
+still starts, the API still works and `/map` still answers — only `/map/scs`
+returns **503**, so the client's Shape Map cannot draw its point cloud. See
+[Shape Map point cloud](#shape-map-point-cloud) and
+[`tools/scs_points/`](tools/scs_points/README.md) for details.
+
+### 5. Start the server
 
 **Windows:**
 ```bat
@@ -603,7 +630,9 @@ The file is produced by a small C++ tool, `scs_points`, built from
 [`tools/scs_points/`](tools/scs_points/README.md). The tool requires a HOOPS
 Visualize Web license key, so it is **not** part of this repository; build it and
 place the executable in
-`bin/`. When the tool is absent, `/map` keeps working and only `/map/scs`
+`bin/`. The commands are in
+[Setup](#setup) step 4, *Build the Shape Map point-cloud tool*.
+When the tool is absent, `/map` keeps working and only `/map/scs`
 returns **503**. Generated files are cached under `scs_map/` with an LRU cap set
 by `HOOPS_AI_SHAPE_MAP_SCS_CACHE_MAX` (default `32`).
 

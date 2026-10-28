@@ -57,7 +57,7 @@ Colours are one 0-255 RGB triple per group.
 The build resolves SDK headers and libraries from a single environment
 variable, `HVISUALIZE_WEB_INSTALL_DIR`, which points at the root of the HOOPS
 Visualize Web SDK (the folder that contains `authoring/libsc`).
-No absolute SDK path is stored in the project files.
+No absolute SDK path is stored in the build scripts.
 
 > **Match the SDK version to the web viewer engine.** Build against the same
 > HOOPS Visualize Web version the client is pinned to (`web/package.json`:
@@ -73,21 +73,29 @@ and place it in this folder (`tools/scs_points/`). It is git-ignored, so your ke
 is never committed. Do **not** copy a placeholder into place — the build needs a
 real key to author the SCS.
 
-### Windows (Visual Studio 2022)
+### Windows (MSVC, terminal)
+
+Only the **MSVC compiler** is needed — the "Desktop development with C++"
+workload of **Build Tools for Visual Studio 2022** is enough. The Visual Studio
+IDE is not required (the HOOPS authoring libraries are MSVC-built static
+libraries linked with `/MD`, so MinGW is not an option).
 
 ```
-copy _VS2022.bat.example _VS2022.bat   REM then edit the SDK and devenv paths
-_VS2022.bat                            REM opens scs_points.sln in Visual Studio
+copy _win_env.bat.example _win_env.bat   REM then edit the SDK path
+build.bat                                REM writes ..\..\bin\scs_points.exe
+build.bat clean                          REM removes build_win\ and the exe
 ```
 
-Build the `Release | x64` configuration. The executable is written to
-`..\..\bin\scs_points.exe`.
+A plain Command Prompt is fine; there is no need to open a *Developer Command
+Prompt* first. `build.bat` locates the toolset with `vswhere` (which ships with
+every Visual Studio 2017+ installer, including the standalone Build Tools) and
+calls `vcvars64.bat` itself.
 
-> **Launch Visual Studio through `_VS2022.bat`, not by double-clicking the
-> `.sln`.** The project finds `sc_store.h` and the libsc libraries through
-> `HVISUALIZE_WEB_INSTALL_DIR`, which the `.bat` sets before starting Visual
-> Studio. If you open the solution without that variable, the build fails with
-> `cannot open source file "sc_store.h"`.
+> **Why there is no `.sln` any more.** Linux builds through a single Makefile.
+> Keeping a `.vcxproj` alongside a command line meant the correct set of
+> compiler flags existed in two places on Windows, and only one of them would
+> be kept current. There is one build path per platform now; the flags
+> `build.bat` uses are the ones the retired `Release | x64` configuration had.
 
 ### Linux (Ubuntu)
 

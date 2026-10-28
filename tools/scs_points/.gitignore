@@ -1,8 +1,8 @@
 # Secrets and per-developer build launchers.
 # hoops_license.h is downloaded from the Tech Soft 3D Developer Zone (see README).
-# _VS2022.bat / _linux_env.sh are recreated from the matching *.example files.
+# _win_env.bat / _linux_env.sh are recreated from the matching *.example files.
 hoops_license.h
-_VS2022.bat
+_win_env.bat
 _linux_env.sh
 
 # Build artifacts.
