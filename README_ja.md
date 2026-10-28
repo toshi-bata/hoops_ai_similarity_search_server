@@ -142,6 +142,28 @@ main.py  ->  routers/  ->  core.py (facade)  ->  domain modules  ->  config / lo
 
 ---
 
+## テスト
+
+この章は、本リポジトリを動かす人ではなく、改造する人のためのものです。このサンプルは
+ISV パートナーが読んで自社製品に取り込むことを想定しており、テストスイートは、その
+改変が破綻していないかどうかを教えてくれるものです。サーバーを動かすだけなら不要です。
+
+テストスイートは SDK 不要で、HOOPS AI ライセンスも必要ありません。`requirements.txt`
+に加えてテスト専用の依存関係をインストールし、pytest を実行してください。
+
+```bash
+pip install -r requirements.txt -r requirements-dev.txt
+python -m pytest
+```
+
+GitHub Actions のワークフロー（`.github/workflows/tests.yml`）は、`main` への
+すべての push とプルリクエストに対し、この同じ SDK 不要の pytest を Python 3.12 の
+Windows ランナー上で実行します。Windows はこのサーバーのターゲットプラットフォームで
+あり、スイートはそこで検証されています。HOOPS AI SDK もフロントエンドのパッケージも
+インストールせず、シークレットも不要です。
+
+---
+
 ## 要件
 
 - Python 3.12
@@ -216,22 +238,6 @@ HOOPS AI（CPU 版または GPU 版）は、お使いの HOOPS AI ディスト�
 導入手順、導入前後に確認すべきこと、コスト、切り戻しの方法は
 [docs/umap_ja.md](docs/umap_ja.md)（英語版: [docs/umap.md](docs/umap.md)）に
 あります。
-
-### テストの実行
-
-テストスイートは SDK 不要で、HOOPS AI ライセンスも必要ありません。`requirements.txt`
-に加えてテスト専用の依存関係をインストールし、pytest を実行してください。
-
-```bash
-pip install -r requirements.txt -r requirements-dev.txt
-python -m pytest
-```
-
-GitHub Actions のワークフロー（`.github/workflows/tests.yml`）は、`main` への
-すべての push とプルリクエストに対し、この同じ SDK 不要の pytest を Python 3.12 の
-Windows ランナー上で実行します。Windows はこのサーバーのターゲットプラットフォームで
-あり、スイートはそこで検証されています。HOOPS AI SDK もフロントエンドのパッケージも
-インストールせず、シークレットも不要です。
 
 ### 2. 環境変数の設定
 
@@ -387,17 +393,19 @@ npm run build
 
 **Windows**（Build Tools for Visual Studio 2022 の MSVC コンパイラのみ。IDE は不要）:
 ```powershell
-copy tools\scs_points\_win_env.bat.example tools\scs_points\_win_env.bat
-# edit the SDK path, then:
 cd tools\scs_points
+copy _win_env.bat.example _win_env.bat
+# edit the SDK path, then:
 .\build.bat
 ```
 
 **Linux:**
 ```bash
-cp tools/scs_points/_linux_env.sh.example tools/scs_points/_linux_env.sh
+cd tools/scs_points
+cp _linux_env.sh.example _linux_env.sh
 # edit the SDK path, then:
-cd tools/scs_points && source _linux_env.sh && make
+source _linux_env.sh
+make
 ```
 
 このステップは任意ですが、Shape Map を使うなら必要です。ツールが無くても

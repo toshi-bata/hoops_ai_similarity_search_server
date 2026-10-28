@@ -143,6 +143,29 @@ cache-invalidation contract, and the traps the guards protect against -- see
 
 ---
 
+## Tests
+
+This chapter is for people who change this repository, not for people who run
+it. The sample is meant to be read and adapted by ISV partners, and the suite is
+what tells you whether an adaptation still holds together; running the server
+needs none of it.
+
+The test suite is SDK-free and needs no HOOPS AI license: install the test-only
+dependencies on top of `requirements.txt`, then run pytest.
+
+```bash
+pip install -r requirements.txt -r requirements-dev.txt
+python -m pytest
+```
+
+A GitHub Actions workflow (`.github/workflows/tests.yml`) runs this same SDK-free
+pytest on a Windows runner with Python 3.12 for every push and pull request to
+`main`. Windows matches the server's target platform, where the suite has been
+validated. It installs no HOOPS AI SDK and no front-end packages, and requires no
+secrets.
+
+---
+
 ## Requirements
 
 - Python 3.12
@@ -216,22 +239,6 @@ full 2,048-dimensional vectors either way -- and it is tuned by
 `HOOPS_AI_SHAPE_MAP_UMAP_SEED`. The installation procedure, what to check
 before and after it, the cost, and how to roll it back are in
 [docs/umap.md](docs/umap.md) (Japanese: [docs/umap_ja.md](docs/umap_ja.md)).
-
-### Running the tests
-
-The test suite is SDK-free and needs no HOOPS AI license: install the test-only
-dependencies on top of `requirements.txt`, then run pytest.
-
-```bash
-pip install -r requirements.txt -r requirements-dev.txt
-python -m pytest
-```
-
-A GitHub Actions workflow (`.github/workflows/tests.yml`) runs this same SDK-free
-pytest on a Windows runner with Python 3.12 for every push and pull request to
-`main`. Windows matches the server's target platform, where the suite has been
-validated. It installs no HOOPS AI SDK and no front-end packages, and requires no
-secrets.
 
 ### 2. Configure environment variables
 
@@ -387,17 +394,19 @@ Developer Zone and place it in `tools/scs_points/` first.
 
 **Windows** (the MSVC compiler from Build Tools for Visual Studio 2022; no IDE):
 ```powershell
-copy tools\scs_points\_win_env.bat.example tools\scs_points\_win_env.bat
-# edit the SDK path, then:
 cd tools\scs_points
+copy _win_env.bat.example _win_env.bat
+# edit the SDK path, then:
 .\build.bat
 ```
 
 **Linux:**
 ```bash
-cp tools/scs_points/_linux_env.sh.example tools/scs_points/_linux_env.sh
+cd tools/scs_points
+cp _linux_env.sh.example _linux_env.sh
 # edit the SDK path, then:
-cd tools/scs_points && source _linux_env.sh && make
+source _linux_env.sh
+make
 ```
 
 This step is optional, but the Shape Map needs it. Without the tool the server

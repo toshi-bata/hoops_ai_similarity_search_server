@@ -2,8 +2,10 @@
 
 # Batch files must reach Windows with CRLF whatever platform cloned the
 # repository: cmd.exe mis-parses LF-only `if ( ... )` blocks, which
-# tools/scs_points/build.bat is built out of.
+# tools/scs_points/build.bat is built out of. The *.example templates are
+# copied into place as batch files, so they need the same ending.
 *.bat text eol=crlf
+*.bat.example text eol=crlf
 
 # Documents obtained from outside this repository. Keeping them out of the text
 # machinery is an operational rule, not a legal judgement: git must never rewrite
