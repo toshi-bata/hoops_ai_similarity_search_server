@@ -5,8 +5,8 @@ REM the Linux Makefile - one compiler invocation for a single-file C++17 console
 REM program, with no build system in between.
 REM
 REM   copy _win_env.bat.example _win_env.bat   REM then edit the SDK path
-REM   build.bat                                REM writes ..\..\bin\scs_points.exe
-REM   build.bat clean
+REM   .\build.bat                              REM writes ..\..\bin\scs_points.exe
+REM   .\build.bat clean
 setlocal
 pushd "%~dp0"
 

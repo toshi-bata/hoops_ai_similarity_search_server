@@ -10,7 +10,7 @@ SET HVISUALIZE_WEB_INSTALL_DIR=Path\to\Communicator\HOOPS_Visualize_Web_2026.2.0
 
 REM Usage (no Visual Studio IDE; the MSVC compiler from Build Tools is enough):
 REM   copy _win_env.bat.example _win_env.bat   REM then edit the path above
-REM   build.bat
+REM   .\build.bat
 REM
 REM The built executable is placed at ..\..\bin\scs_points.exe (the server's bin\).
 REM
