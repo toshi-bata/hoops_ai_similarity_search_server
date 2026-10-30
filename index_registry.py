@@ -71,6 +71,7 @@ from typing import Any, Optional
 
 import config
 import storage
+import upload_paths
 import embeddings
 
 # ``_env_int`` is a stdlib-only env helper owned by config.py; it is never
@@ -1660,7 +1661,11 @@ def get_index_duplicate_names(name: str) -> dict[str, Any]:
     filename), ``extra_copies`` (how many of those filenames are redundant, i.e.
     all of them minus one per geometry) and ``items``, a list of
     ``{"file_id", "names"}`` sorted by file_id so paging over it is stable.
-    Filenames only -- no server paths.
+    A name is shown with the folder the client uploaded it from when one was
+    recorded, which is what distinguishes two copies in one folder from the
+    same part reused across two assemblies; anything uploaded before that was
+    recorded keeps the bare filename. Filenames and client-supplied folders
+    only -- no server paths.
 
     One directory scan, bounded by the store size, exactly like
     :func:`add_to_index`'s path resolve; it is not run on search or at startup.
@@ -1670,8 +1675,16 @@ def get_index_duplicate_names(name: str) -> dict[str, Any]:
     _validate_index_name(name)
     _require_index_exists(name)
     names_by_id = map_duplicate_CAD_filenames(list(_registered_index_ids(name)))
+    try:
+        relative = upload_paths.paths_for(names_by_id.keys())
+    except Exception:  # display data only
+        logger.debug("upload paths unavailable", exc_info=True)
+        relative = {}
     items = [
-        {"file_id": fid, "names": names}
+        {
+            "file_id": fid,
+            "names": upload_paths.decorate_names(relative.get(fid), names),
+        }
         for fid, names in sorted(names_by_id.items())
     ]
     extra = sum(len(it["names"]) for it in items) - len(items)

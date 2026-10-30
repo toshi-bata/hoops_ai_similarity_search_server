@@ -484,6 +484,14 @@ export async function existsFiles(fileIds, onProgress) {
 export function uploadBatch(files) {
   const form = new FormData();
   for (const file of files) form.append('files', file);
+  // The folder each file came from, one value per file and in the same order,
+  // so a registration report can name a part the way the operator named it.
+  // A separate field rather than the multipart filename on purpose: the
+  // filename is what the server derives the stored name from, and this value
+  // is whatever the browser handed us. Kept apart, it stays display data and
+  // cannot reach a path on disk. webkitRelativePath is '' for individually
+  // picked files, so those fall back to the plain name.
+  for (const file of files) form.append('relative_paths', file.webkitRelativePath || file.name || '');
   return request('/files/upload-batch', { method: 'POST', form });
 }
 

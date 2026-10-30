@@ -112,6 +112,19 @@ def _get_tag_vocabulary_lock() -> threading.Lock:
     return _TAG_VOCABULARY_LOCK
 
 
+# Process-wide lock over DATA_ROOT/upload_paths.json, which is application-wide
+# for the same reason the tag vocabulary is: where a file came from belongs to
+# the upload, not to an index. Held across the read-modify-write of that file
+# and nothing else; it guards display data only, so no other lock is ever taken
+# while it is held.
+_UPLOAD_PATHS_LOCK = threading.Lock()
+
+
+def _get_upload_paths_lock() -> threading.Lock:
+    """Return the process-wide lock over the client-supplied upload paths."""
+    return _UPLOAD_PATHS_LOCK
+
+
 # Per-index lock held for the whole of a matcher build, so two callers wanting
 # the same matcher produce one build rather than two. Distinct from the index
 # lock on purpose: building takes ~20 s, and holding the index lock that long

@@ -40,6 +40,7 @@ import assembly
 import config
 import index_registry
 import storage
+import upload_paths
 from config import _env_int
 from index_registry import (
     _EMBED_ERROR_DEFAULT,
@@ -308,11 +309,31 @@ def run_index_add_job(
     timings: dict[str, Any] = {"num_workers": workers, "time_limit": limit}
     ctx.set_timings(**timings)
 
-    # Resolved once, so the report can name files rather than hashes.
-    path_by_fid: dict[str, str] = {
-        fid: str(path.resolve())
+    # Resolved once, so the report can name files the way the client does.
+    # The original filename, never the stored path: the report is read by an
+    # operator through the browser, and neither this server's directory layout
+    # nor its "<sha256>_<name>" rename rule is the client's business. The
+    # client-supplied folder is preferred when there is one; everything
+    # uploaded before that was recorded falls back to the filename on disk, and
+    # an id with neither (a file deleted from the store mid-job) falls back to
+    # the id itself rather than to an empty column.
+    name_by_fid: dict[str, str] = {
+        fid: storage.original_filename(path.name)
         for fid, path in map_persistent_CAD_files(file_ids).items()
     }
+    try:
+        relative_by_fid = upload_paths.paths_for(file_ids)
+    except Exception:  # display data only; never fail a run over it
+        logger.debug("upload paths unavailable", exc_info=True)
+        relative_by_fid = {}
+
+    def _display(fid: str) -> str:
+        recorded = relative_by_fid.get(fid)
+        if recorded:
+            return recorded[0]
+        return name_by_fid.get(fid, fid)
+
+    display_by_fid: dict[str, str] = {fid: _display(fid) for fid in file_ids}
 
     t0 = time.perf_counter()
 
@@ -347,11 +368,24 @@ def run_index_add_job(
 
     # too_heavy_files.log must be read now: the next embedding call overwrites it.
     heavy_flagged = storage.read_too_heavy_files(artifacts)
+    # The SDK logs its own stored paths; the report shows the client's names.
+    def _display_stored(line: Any) -> str:
+        base = pathlib.PurePath(str(line or "").replace("\\", "/")).name
+        if base[64:65] == "_" and base[:64].lower() in display_by_fid:
+            return display_by_fid[base[:64].lower()]
+        return storage.original_filename(line)
+
+    heavy_flagged = [_display_stored(line) for line in heavy_flagged]
     errors = annotate_failures(list(result.get("errors") or []))
     for err in errors:
         fid = str(err.get("file_id") or "")
-        if fid in path_by_fid:
-            err.setdefault("filename", path_by_fid[fid])
+        if fid in display_by_fid:
+            # Assigned, not set as a default: whatever the SDK put here is one
+            # of its own stored paths, which is the thing being kept off the
+            # report.
+            err["filename"] = display_by_fid[fid]
+        elif err.get("filename"):
+            err["filename"] = storage.original_filename(err["filename"])
 
     added = int(result.get("added", 0))
     updated = int(result.get("updated", 0))
@@ -391,6 +425,13 @@ def run_index_add_job(
     # store, and never fatal -- a missing section must not cost a good report.
     try:
         duplicate_names = storage.map_duplicate_CAD_filenames(file_ids)
+        # Show each name with the folder it came from when one was recorded:
+        # that is what tells an operator whether the copies sat side by side or
+        # in two different assemblies.
+        duplicate_names = {
+            fid: upload_paths.decorate_names(relative_by_fid.get(fid), names)
+            for fid, names in duplicate_names.items()
+        }
     except Exception as exc:
         logger.warning("[JOB] could not collect duplicate names: %s", exc)
         duplicate_names = {}
@@ -398,7 +439,7 @@ def run_index_add_job(
         _write_add_job_report(
             artifacts / "report.txt",
             name,
-            [path_by_fid.get(f, f) for f in file_ids if f not in failed_ids],
+            [display_by_fid.get(f, f) for f in file_ids if f not in failed_ids],
             errors,
             heavy_flagged,
             timings,

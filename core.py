@@ -115,6 +115,7 @@ from storage import (
     check_persistent_CAD_files,
     map_persistent_CAD_files,
     map_duplicate_CAD_filenames,
+    original_filename,
     delete_persistent_CAD_file,
     list_persistent_CAD_files,
     server_paths_enabled,
@@ -246,6 +247,17 @@ from index_registry import (
     _obb_meta_value,
     _compute_faiss_stats,
     SchemaVersionError,
+)
+
+# Client-supplied upload paths (DATA_ROOT/upload_paths.json) live in
+# upload_paths.py. Re-exported under names that say what they are at the call
+# site, because the one thing a reader must not have to look up is whether this
+# data is ever used to build a path on disk. It is not: it is display only.
+from upload_paths import (
+    record as record_upload_paths,
+    paths_for as upload_paths_for,
+    decorate_names as decorate_upload_names,
+    sanitize_relative_path,
 )
 
 # The index tag sidecar and the tag-filter API live in tags.py. The one

@@ -866,6 +866,28 @@ DELETE /files/{file_id}              # delete a stored CAD file
 filename so a client can render the model locally (for example in HOOPS Visualize Web).
 Unknown ids return **404**.
 
+`POST /files/upload-batch` also accepts an optional `relative_paths` field: one
+value per file, in the same order as the file parts, holding the folder path the
+client uploaded it from (a browser sends `webkitRelativePath`). The web client
+always sends it. What the server does with it is deliberately narrow:
+
+- **It is display data only. It never decides where anything is written.** The
+  field is attacker-controlled, so a value such as `..\..\Windows\x.stp` or
+  `C:\x.stp` would be a directory traversal if it reached a save path. The
+  stored name is still derived from the file's SHA-256 and the sanitised
+  basename of the multipart filename, exactly as it was before this field
+  existed. That is also why the path travels in its own field rather than as
+  the multipart filename.
+- A value that is absolute, drive-qualified, rooted, contains a `..` segment,
+  carries a control character or is implausibly long is **refused whole**, not
+  trimmed down. A folder picker never produces one.
+- Accepted paths are kept in `DATA_ROOT/upload_paths.json`, keyed by `file_id`,
+  several per id: identical bytes share a `file_id`, so the same part sitting in
+  two assemblies is exactly what this records.
+- Registration reports and the duplicate-names view show these paths. **Files
+  uploaded before this existed have none and fall back to their original
+  filename**, which is already on disk — no blanks and no `unknown`.
+
 **Windows (PowerShell, `curl.exe`):**
 
 ```powershell
@@ -1230,6 +1252,7 @@ the retry-pass values, so the second pass is one click rather than a lookup.
 | `models/` | Embedding checkpoints. This is where an operator drops their own `*.ckpt`; it is searched before the default bundled in `<APP_ROOT>/models/` and shadows it (see [Custom (fine-tuned) models](#custom-fine-tuned-models)). | Never (the server only reads it). |
 | `scs_map/` | Cached Shape Map point-cloud `.scs` files. | LRU-capped by `HOOPS_AI_SHAPE_MAP_SCS_CACHE_MAX` (default 32). |
 | `tag_vocabulary.json` | The tag names available to choose from, shared by every index (a file, not a directory). | Never (names are only removed on request). |
+| `upload_paths.json` | The folder each file was uploaded from, as the client reported it — display data only, never used to build a path (a file, not a directory). | Never. |
 
 All of these live under a single **data root**. When `HOOPS_AI_DATA_DIR` is not
 set, the data root defaults to `<app>/data` — a `data/` subdirectory of the

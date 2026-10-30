@@ -363,6 +363,22 @@ def map_duplicate_CAD_filenames(file_ids: list[str]) -> dict[str, list[str]]:
     }
 
 
+def original_filename(stored: Any) -> str:
+    """The name a client uploaded a file under, from its stored name or path.
+
+    Stored files are ``<sha256>_<originalname>``; that prefix is this server's
+    bookkeeping, not something a client ever saw. Anything leaving the server
+    for a report or a response goes through here, so neither the rename rule
+    nor the directory the store happens to sit in is ever disclosed. A name
+    that does not carry the prefix is returned as its own basename, which is
+    what makes this safe to point at paths from the SDK's own logs.
+    """
+    name = pathlib.PurePath(str(stored or "").replace("\\", "/")).name
+    if len(name) > 65 and name[64:65] == "_" and _FILE_ID_RE.match(name[:64].lower()):
+        return name[65:]
+    return name
+
+
 def delete_persistent_CAD_file(file_id: str) -> bool:
     """Delete a persistent CAD file by file_id. Returns True if a file was deleted."""
     CAD_shared_dir = get_CAD_shared_dir()
