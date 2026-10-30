@@ -127,8 +127,10 @@ export function createRegister({ getIndexName, onJobComplete }) {
   function setSelection(files) {
     selectedFiles = files;
     // Re-resolve what a run over this selection would use: the worker count is
-    // bounded by the file count, so it moves with the selection.
-    showFirstPassPlan(files.length).catch(() => {});
+    // bounded by the file count, so it moves with the selection. With nothing
+    // selected the count is simply unknown, and the server answers for the host
+    // alone rather than leaving the fields blank.
+    showFirstPassPlan(files.length > 0 ? files.length : null).catch(() => {});
     if (files.length === 0) {
       selectionInfo.textContent = '';
       submitButton.disabled = true;
@@ -170,6 +172,9 @@ export function createRegister({ getIndexName, onJobComplete }) {
   let planToken = 0;
 
   function clearPlanFields() {
+    // Also invalidate any plan still in flight, so a late answer cannot refill
+    // fields that a caller has just deliberately emptied.
+    planToken += 1;
     el('register-workers').value = '';
     el('register-timelimit').value = '';
     el('register-workers').title = '';
@@ -186,7 +191,10 @@ export function createRegister({ getIndexName, onJobComplete }) {
       `cap ${b.cap}`,
       `cores ${b.cores}${b.cores_measured ? '' : ' (approx)'}`,
       b.ram == null ? 'ram n/a' : `ram ${b.ram}`,
-      `files ${b.files}`,
+      // null means no selection yet, so the file count was not one of the
+      // figures the server took the smallest of. Say that rather than "files
+      // null", which would read as a count of zero.
+      b.files == null ? 'no file count yet' : `files ${b.files}`,
     ];
     return `${label}: the smallest of ${bits.join(', ')}. Clear the field to let the server size the run.`;
   }
@@ -200,15 +208,14 @@ export function createRegister({ getIndexName, onJobComplete }) {
       'reported as retryable; resubmit those with a longer budget.';
   }
 
-  // Fill the fields for a first-pass run over `fileCount` files. Never fatal:
-  // if the plan cannot be fetched the fields stay empty, which is exactly the
-  // old behaviour (the server sizes the run).
+  // Fill the fields for a first-pass run over `fileCount` files. Pass null when
+  // no selection exists yet: everything except the file count is settled before
+  // any files are chosen, and the count can only lower the result, so the
+  // dialog can show real numbers from the moment it opens and refresh them when
+  // a folder arrives. Never fatal: if the plan cannot be fetched the fields stay
+  // empty, which is exactly the old behaviour (the server sizes the run).
   async function showFirstPassPlan(fileCount) {
     const token = ++planToken;
-    if (fileCount <= 0) {
-      clearPlanFields();
-      return;
-    }
     let plan;
     try {
       plan = await api.getEmbeddingPlan(fileCount);
@@ -633,9 +640,9 @@ export function createRegister({ getIndexName, onJobComplete }) {
     const name = getIndexName();
     if (!name) return;
     resetRunUi();
+    // Fills Workers / Time limit with the host's numbers right away; the count
+    // is folded in once a folder is picked.
     setSelection([]);
-    el('register-workers').value = '';
-    el('register-timelimit').value = '';
     indexLabel.textContent = `Index: ${name}`;
     modal.hidden = false;
     refreshJobs(name);
@@ -654,8 +661,9 @@ export function createRegister({ getIndexName, onJobComplete }) {
     if (!name || !fileId) return;
     resetRunUi();
     setSelection([]);
-    el('register-workers').value = '';
-    el('register-timelimit').value = '';
+    // This path queues immediately with no options, so the server sizes it;
+    // showing resolved numbers the run never consulted would be a lie.
+    clearPlanFields();
     indexLabel.textContent = `Index: ${name}`;
     modal.hidden = false;
     setPhase(`Registering "${filename || fileId}"\u2026`);

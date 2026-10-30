@@ -540,7 +540,7 @@ _RETRY_TIME_LIMIT_SECONDS = 1200
 _SDK_DEFAULT_TIME_LIMIT_SECONDS = 120
 
 
-def _size_workers(file_count: int, footprint_factor: int = 1) -> dict[str, Any]:
+def _size_workers(file_count, footprint_factor: int = 1) -> dict[str, Any]:
     """Size a worker pool for *file_count* files, and say what decided it.
 
     The single sizing rule, so that the number a run uses and the number the UI
@@ -548,6 +548,12 @@ def _size_workers(file_count: int, footprint_factor: int = 1) -> dict[str, Any]:
     the four figures it is the minimum of (``cap``, ``cores``, ``ram``,
     ``files``), which are what the ``[EMBED] auto workers=...`` log line
     reports; ``ram`` is ``None`` when there is no memory reading to report.
+
+    *file_count* may be ``None``, meaning "not known yet". The file count only
+    ever lowers the answer -- a pool never has more workers than files to give
+    them -- so leaving it out of the minimum yields the ceiling the host alone
+    allows, which is what a UI can show before a selection exists. ``files``
+    comes back ``None`` to say so rather than guessing a number.
 
     *footprint_factor* is how much more memory one worker of this pass needs
     than HOOPS_AI_MODEL_FOOTPRINT_MB describes; 1 is the normal pass. It
@@ -579,7 +585,9 @@ def _size_workers(file_count: int, footprint_factor: int = 1) -> dict[str, Any]:
         logger.debug("[EMBED] RAM probe unavailable; sizing workers by cores only")
         core_cap = max(1, core_cap // factor)
 
-    bounds = [max_workers, core_cap, max(1, file_count)]
+    bounds = [max_workers, core_cap]
+    if file_count is not None:
+        bounds.append(max(1, file_count))
     if ram_cap is not None:
         bounds.append(ram_cap)
     return {
@@ -669,7 +677,7 @@ def effective_embed_time_limit() -> int:
     return embed_time_limit() or _SDK_DEFAULT_TIME_LIMIT_SECONDS
 
 
-def plan_embedding_run(file_count: int) -> dict[str, Any]:
+def plan_embedding_run(file_count=None) -> dict[str, Any]:
     """Resolve the worker count and per-file budget for both registration passes.
 
     The documented loop is two passes: a first one sized for throughput, then a
@@ -680,13 +688,19 @@ def plan_embedding_run(file_count: int) -> dict[str, Any]:
     itself goes stale the next time the sizing changes, which in this file has
     happened repeatedly.
 
+    *file_count* may be omitted, which answers for the host alone: everything
+    except the file count is settled before any files are chosen, and the file
+    count can only lower the result, so a dialog can show real numbers from the
+    moment it opens and refresh them when a selection arrives.
+
     Returns ``{"file_count", "first_pass": {...}, "retry_pass": {...}}`` where
     each pass carries ``workers``, ``time_limit`` and the ``basis`` the worker
     count is the minimum of (``cap`` / ``cores`` / ``ram`` / ``files``, plus
-    whether the core count was measured or approximated). Budgets are always
+    whether the core count was measured or approximated). ``file_count`` and
+    ``basis.files`` are ``None`` when none was given. Budgets are always
     effective values, never the raw ``0``.
     """
-    count = max(0, int(file_count))
+    count = None if file_count is None else max(0, int(file_count))
     first = _size_workers(count)
     retry = _size_workers(count, footprint_factor=_HEAVY_FOOTPRINT_FACTOR)
 

@@ -151,10 +151,14 @@ export function getIndexStats(name) {
 // several times. Returns { file_count, first_pass, retry_pass } where each pass
 // is { workers, time_limit, basis: { cap, cores, cores_measured, ram, files,
 // model_mb } }. time_limit is always an effective value, never 0.
+//
+// Pass nothing to plan for the host alone, before a selection exists: the
+// server then leaves the file count out of the minimum and reports file_count
+// and basis.files as null.
 export function getEmbeddingPlan(fileCount) {
-  return request('/similarity/embedding-plan', {
-    query: { file_count: Math.max(0, Number(fileCount) || 0) },
-  });
+  const known = fileCount != null && Number.isFinite(Number(fileCount));
+  const query = known ? { file_count: Math.max(0, Number(fileCount)) } : {};
+  return request('/similarity/embedding-plan', { query });
 }
 
 // GET /similarity/index/{name}/duplicates -> the geometries in the index that

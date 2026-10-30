@@ -14,6 +14,7 @@ read.
 
 import os
 import pathlib
+import re
 import sys
 import tempfile
 import unittest
@@ -260,6 +261,34 @@ class ReportDuplicatesSectionTests(unittest.TestCase):
             path = pathlib.Path(tmp) / "report.txt"
             jobs._write_add_job_report(path, "tmcad", [], [], [], {})
             self.assertIn("[DUPLICATES]", path.read_text(encoding="utf-8"))
+
+
+class DuplicatePanelHeadingTests(unittest.TestCase):
+    """The panel heading has to name the index, not the pending selection.
+
+    The panel lives inside the Register dialog and is filled when the modal
+    opens, before a folder is even picked, so a heading that only says "same
+    geometry, several filenames" was read as a report on the files about to be
+    registered. A shortening would bring that misreading straight back.
+    """
+
+    def _heading(self):
+        html = (
+            pathlib.Path(__file__).resolve().parents[1] / "web" / "index.html"
+        ).read_text(encoding="utf-8")
+        match = re.search(
+            r'<h3 class="register-duplicates-title">(.*?)</h3>', html, re.S
+        )
+        self.assertIsNotNone(match, "web/index.html has no duplicates heading")
+        return match.group(1).strip()
+
+    def test_the_heading_says_it_is_about_the_index(self):
+        self.assertIn("index", self._heading().lower())
+
+    def test_the_heading_says_the_geometries_are_already_there(self):
+        # "already" is what separates "what is in the index" from "what this
+        # run will add".
+        self.assertIn("already", self._heading().lower())
 
 
 if __name__ == "__main__":

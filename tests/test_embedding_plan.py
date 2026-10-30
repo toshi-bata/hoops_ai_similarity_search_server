@@ -122,6 +122,70 @@ class TestEmbeddingPlanEndpoint(unittest.TestCase):
         self.assertEqual(res.status_code, 422)
 
 
+class TestPlanningBeforeAnythingIsSelected(unittest.TestCase):
+    """``file_count`` is optional, so the dialog can fill its fields on open.
+
+    Everything except the file count is settled by the host before any file is
+    chosen, and the count can only lower the answer, so omitting it yields the
+    ceiling cap / cores / RAM allow. The assertions are structural: the real
+    numbers depend on the machine running the tests.
+    """
+
+    def test_the_count_may_be_omitted(self):
+        with patch.dict(os.environ, ENV, clear=True):
+            res = _client().get("/similarity/embedding-plan")
+        self.assertEqual(res.status_code, 200)
+        body = res.json()
+        self.assertIsNone(body["file_count"])
+        for key in ("first_pass", "retry_pass"):
+            with self.subTest(pass_name=key):
+                self.assertGreaterEqual(body[key]["workers"], 1)
+                self.assertGreaterEqual(body[key]["time_limit"], 1)
+
+    def test_an_omitted_count_is_not_one_of_the_bounds(self):
+        """``basis.files`` is null, which is how the UI knows not to show 0."""
+        with patch.dict(os.environ, ENV, clear=True):
+            body = _client().get("/similarity/embedding-plan").json()
+        for key in ("first_pass", "retry_pass"):
+            with self.subTest(pass_name=key):
+                self.assertIsNone(body[key]["basis"]["files"])
+
+    def test_the_sizing_itself_leaves_the_count_out_of_the_minimum(self):
+        """A one-file count would pin the pool to 1; omitting it must not."""
+        env = dict(ENV)
+        env["HOOPS_AI_MAX_WORKERS"] = "12"
+        with patch.dict(os.environ, env, clear=True), \
+                patch.object(
+                    index_registry, "_physical_core_cap", return_value=(12, True)
+                ):
+            unknown = index_registry._size_workers(None)
+            one_file = index_registry._size_workers(1)
+        self.assertEqual(one_file["workers"], 1)
+        self.assertGreater(unknown["workers"], 1)
+        self.assertIsNone(unknown["files"])
+
+    def test_a_supplied_count_still_binds_the_minimum(self):
+        with patch.dict(os.environ, ENV, clear=True):
+            body = _client().get(
+                "/similarity/embedding-plan", params={"file_count": 1}
+            ).json()
+        self.assertEqual(body["file_count"], 1)
+        self.assertEqual(body["first_pass"]["basis"]["files"], 1)
+        self.assertEqual(body["first_pass"]["workers"], 1)
+
+    def test_the_client_asks_before_a_folder_is_picked(self):
+        """Opening the dialog must resolve a plan, not wait for a selection."""
+        source = (REPO_ROOT / "web" / "src" / "register.js").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("files.length > 0 ? files.length : null", source)
+        api_source = (REPO_ROOT / "web" / "src" / "api.js").read_text(
+            encoding="utf-8"
+        )
+        # An omitted count must travel as an absent parameter, not as 0.
+        self.assertNotIn("Number(fileCount) || 0", api_source)
+
+
 class TestEffectiveTimeLimit(unittest.TestCase):
     def test_zero_becomes_the_sdk_default(self):
         with patch.dict(os.environ, ENV, clear=True):

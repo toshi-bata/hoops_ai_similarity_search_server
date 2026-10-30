@@ -604,9 +604,14 @@
              file_ids are content hashes, so identical bytes are ONE entry. What
              is listed here is the geometries that arrived under more than one
              original filename. Filled whenever the modal opens and after a job
-             settles; see src/register.js. -->
+             settles; see src/register.js.
+
+             The heading has to say "already in this index" because the panel
+             sits inside the Register dialog and shows before a folder is even
+             picked, so a shorter wording ("Same geometry, several filenames")
+             was read as a report on the files about to be registered. -->
         <div id="register-duplicates" class="register-duplicates" hidden>
-          <h3 class="register-duplicates-title">Same geometry, several filenames</h3>
+          <h3 class="register-duplicates-title">Already in this index: same geometry under several filenames</h3>
           <div id="register-duplicates-summary" class="register-summary"></div>
           <pre id="register-duplicates-list" class="register-report"></pre>
         </div>

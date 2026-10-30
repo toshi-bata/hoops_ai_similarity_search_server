@@ -1187,6 +1187,12 @@ budget — never the `0` that means "pass nothing and leave the SDK's own defaul
 in place". The web client uses it to pre-fill its two fields; the sizing rule
 itself stays on the server, so there is only ever one copy of it.
 
+`file_count` is optional. Omit it and the answer is the ceiling the host alone
+allows: every other input (the cap, the physical core count, free RAM) is
+settled before any file is chosen, and the file count can only lower the
+result. `file_count` and `basis.files` then come back `null`, which says the
+count was not one of the figures the minimum was taken over.
+
 `POST .../jobs/add` takes a JSON body. Supply **one** input source plus optional
 tuning:
 
@@ -1245,10 +1251,13 @@ Cancellation only takes effect **before** a job starts embedding, so split a
 large corpus into several jobs to keep cancellation and commit granularity under
 your control.
 
-In the browser, **Register…** runs both passes for you. Selecting files fills
-**Workers** and **Time limit** with the numbers that selection will really be
-registered with (from `GET /similarity/embedding-plan`); hovering either field
-shows what the worker count was derived from. Edit a value to override it, or
+In the browser, **Register…** runs both passes for you. Opening the dialog
+already fills **Workers** and **Time limit** with the numbers this host allows,
+and picking files refines them with the file count (a small selection lowers
+the worker count, which is correct). The values come from
+`GET /similarity/embedding-plan`; hovering either field shows what the worker
+count was derived from, and says so plainly while no file count is known yet.
+Edit a value to override it, or
 clear a field to send nothing and let the server size that half of the run —
 which is what every non-browser caller does. When the job finishes with
 retryable failures, a **Resubmit** button appears and the two fields change to

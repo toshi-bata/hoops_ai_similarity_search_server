@@ -327,16 +327,19 @@ class EmbeddingPassPlan(BaseModel):
 
 
 class EmbeddingPlanResponse(BaseModel):
-    file_count: int
+    file_count: Optional[int] = None
     first_pass: EmbeddingPassPlan
     retry_pass: EmbeddingPassPlan
 
 
 @router.get("/embedding-plan", response_model=EmbeddingPlanResponse)
 def get_embedding_plan(
-    file_count: int = Query(
-        0, ge=0, le=_MAX_FILE_IDS_PER_JOB,
-        description="How many files the run would submit.",
+    file_count: Optional[int] = Query(
+        None, ge=0, le=_MAX_FILE_IDS_PER_JOB,
+        description=(
+            "How many files the run would submit. Omit it to plan for the host "
+            "alone, before a selection exists."
+        ),
     ),
 ):
     """Resolve the worker count and per-file budget a job would use.
@@ -346,6 +349,13 @@ def get_embedding_plan(
     can show the real numbers rather than the word "auto". Also resolves the
     retry pass -- fewer workers, a longer budget -- which is the documented
     second half of the registration loop.
+
+    ``file_count`` is optional because it is the only input that depends on a
+    selection, and it can only lower the answer. Omitted, the reply is the
+    ceiling the cap, the cores and the free RAM allow, and ``file_count`` and
+    ``basis.files`` come back ``null`` to say the count was not in the
+    minimum -- which lets a dialog fill its fields the moment it opens and ask
+    again once a folder is chosen.
 
     It lives here, beside the job endpoint whose two optional fields it is
     answering for, rather than in ``/client-config``: that is a one-shot startup
