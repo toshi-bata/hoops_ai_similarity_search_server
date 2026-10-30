@@ -161,18 +161,6 @@ export function getEmbeddingPlan(fileCount) {
   return request('/similarity/embedding-plan', { query });
 }
 
-// GET /similarity/index/{name}/duplicates -> the geometries in the index that
-// were registered under more than one original filename. file_ids are content
-// hashes, so these are NOT duplicate index entries (there is one entry each);
-// only the filenames the copies arrived with differ. Returns { name, total,
-// extra_copies, offset, limit, items: [{ file_id, names }] }, where total and
-// extra_copies cover the whole index regardless of the page.
-export function getIndexDuplicates(name, { offset = 0, limit = 500 } = {}) {
-  return request(`/similarity/index/${encodeURIComponent(name)}/duplicates`, {
-    query: { offset, limit },
-  });
-}
-
 // GET /similarity/index/{name}/parts -> paginated file-level listing.
 // Returns { total, offset, limit, items: [{ id, filename, kind, bodies,
 // thumbnail_url, scs_url, registered_at, tags }] }.
@@ -536,10 +524,25 @@ export function uploadBatch(files) {
 // and returns at once. `workers` and `timeLimit` are optional tuning: omit for
 // the server's automatic sizing, or use few workers + a long timeLimit for a
 // retry pass over heavy assemblies (the documented two-pass loop).
-export function createIndexJob(name, fileIds, { workers, timeLimit } = {}) {
+//
+// `selectedCount` and `duplicatePaths` describe the caller's own selection:
+// how many files were picked, and which relative paths in that selection
+// turned out to be the same bytes. They are display data for the report, and
+// they are what lets it explain the gap between "10897 selected" and
+// "input=10250". Both are optional; a caller with no selection (curl, MCP, a
+// single-file registration) sends neither.
+export function createIndexJob(
+  name, fileIds, { workers, timeLimit, selectedCount, duplicatePaths } = {},
+) {
   return request(`/similarity/index/${encodeURIComponent(name)}/jobs/add`, {
     method: 'POST',
-    body: { file_ids: fileIds, workers, time_limit: timeLimit },
+    body: {
+      file_ids: fileIds,
+      workers,
+      time_limit: timeLimit,
+      selected_count: selectedCount,
+      duplicate_paths: duplicatePaths,
+    },
   });
 }
 

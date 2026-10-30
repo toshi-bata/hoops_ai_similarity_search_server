@@ -890,7 +890,7 @@ always sends it. What the server does with it is deliberately narrow:
 - Accepted paths are kept in `DATA_ROOT/upload_paths.json`, keyed by `file_id`,
   several per id: identical bytes share a `file_id`, so the same part sitting in
   two assemblies is exactly what this records.
-- Registration reports and the duplicate-names view show these paths. **Files
+- Registration reports show these paths. **Files
   uploaded before this existed have none and fall back to their original
   filename**, which is already on disk — no blanks and no `unknown`.
 
@@ -1203,6 +1203,23 @@ tuning:
 | `server_paths` | `string[]` | Paths **on the server machine**. Operator seeding only; returns **403** unless `HOOPS_AI_ALLOW_SERVER_PATHS=true`. |
 | `workers` | `int` | Parallel embedding workers. Omit to size automatically from CPU cores and free RAM (capped by `HOOPS_AI_MAX_WORKERS`, default 12). |
 | `time_limit` | `int` | Per-file embedding budget in seconds. Omit to use `HOOPS_AI_EMBED_TIME_LIMIT`, else the SDK's 120 s. Files that exceed it are reported with `retryable=true`. |
+| `selected_count` | `int` | How many files the caller actually picked. Display only — see below. |
+| `duplicate_paths` | `object` | `{ "<file_id>": ["<relative path>", ...] }` for the picked files that turned out to be byte-identical to each other. Display only — see below. |
+
+**Why a folder of 10,897 files registers 10,250.** A `file_id` is the SHA-256 of
+the file's bytes, so two byte-identical CAD files are one entry; the copies have
+nowhere to go. The two optional fields above let the job say so. The web client
+fills them in from the selection it hashed, and the report then opens with
+
+```
+# Selection: selected=10897 submitted=10250 collapsed=647
+```
+
+and lists the relative paths that collapsed under `[DUPLICATES]`. **The figures
+describe that one submission.** No other job, index or previously stored file is
+consulted, and a job that sends neither field simply reports no selection. The
+paths go through the same refuse-don't-repair sanitiser as uploads and remain
+display data: they never reach the filesystem.
 
 The job runs one embedding pass over all inputs and returns immediately with a
 `job_id`; poll `GET .../jobs/{job_id}` for `progress` and, when finished, a

@@ -137,20 +137,6 @@ class TestSeveralPathsPerFileId(unittest.TestCase):
 class TestFallbackForDataWithoutPaths(unittest.TestCase):
     """Everything uploaded before this existed has no recorded path."""
 
-    def test_names_without_a_recorded_path_are_returned_unchanged(self):
-        self.assertEqual(
-            upload_paths.decorate_names(None, ["cover.stp", "shaft.stp"]),
-            ["cover.stp", "shaft.stp"],
-        )
-
-    def test_a_recorded_path_decorates_the_name_it_matches(self):
-        self.assertEqual(
-            upload_paths.decorate_names(
-                ["asm1/cover.stp"], ["cover.stp", "shaft.stp"]
-            ),
-            ["asm1/cover.stp", "shaft.stp"],
-        )
-
     def test_the_original_filename_is_recovered_from_a_stored_name(self):
         self.assertEqual(storage.original_filename(f"{SHA_A}_cover.stp"), "cover.stp")
 
@@ -432,8 +418,8 @@ class TestCoreReExportsAreTheSameObjects(unittest.TestCase):
     PAIRS = (
         ("record_upload_paths", "record"),
         ("upload_paths_for", "paths_for"),
-        ("decorate_upload_names", "decorate_names"),
         ("sanitize_relative_path", "sanitize_relative_path"),
+        ("sanitize_duplicate_paths", "sanitize_duplicate_paths"),
     )
 
     def test_each_facade_name_is_bound_to_the_module_object(self):

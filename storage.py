@@ -308,59 +308,13 @@ def map_persistent_CAD_files(file_ids: list[str]) -> dict[str, "pathlib.Path"]:
                 # One path per id is all an embedding run needs, and the bytes
                 # behind every path sharing an id are identical by construction
                 # (the id IS their SHA-256). The extra names are not an error,
-                # so this keeps the first and says nothing -- which is why the
-                # fact that one geometry was uploaded under several original
-                # filenames used to be invisible. See
-                # :func:`map_duplicate_CAD_filenames` for that view; do not
-                # change the rule here, callers depend on getting exactly one
-                # path per id.
+                # so this keeps the first and says nothing. Do not change the
+                # rule here: callers depend on getting exactly one path per id.
+                # Which files in a registration were byte-identical copies of
+                # each other is answered from the relative paths that run's own
+                # client sent, not by scanning this store -- see jobs.py.
                 result[fid] = pathlib.Path(entry.path)
     return result
-
-
-def map_duplicate_CAD_filenames(file_ids: list[str]) -> dict[str, list[str]]:
-    """Return the original filenames of every *file_id* stored under two or more.
-
-    Same single-scan policy as :func:`map_persistent_CAD_files`, answering the
-    other question: not "where is this file" but "was this one geometry
-    uploaded under several names". Identical bytes hash to one file_id and are
-    therefore one index entry, yet a client that uploads a folder sends every
-    copy, so the store keeps ``<sha256>_a.stp`` and ``<sha256>_b.stp`` side by
-    side. Nothing in the index is duplicated; only the original names are.
-
-    Only ids carrying two or more names are returned, so the result is
-    proportional to the answer (hundreds) rather than to the corpus (tens of
-    thousands) -- a caller that wants the usual two headline figures still has
-    them: the number of such geometries is ``len(result)`` and the number of
-    redundant copies is ``sum(len(v) for v in result.values()) - len(result)``,
-    since every omitted id contributes exactly zero of the latter.
-
-    The values are the original filenames with the ``<sha256>_`` prefix
-    removed, never server paths: this feeds a response that is read by a
-    browser, and the layout of the CAD store is not the client's business.
-    Each id's names are sorted so two calls read the same.
-    """
-    wanted = set(file_ids)
-    names_by_id: dict[str, list[str]] = {}
-    if not wanted:
-        return {}
-    CAD_shared_dir = get_CAD_shared_dir()
-    if not CAD_shared_dir.exists():
-        return {}
-    with os.scandir(CAD_shared_dir) as it:
-        for entry in it:
-            name = entry.name
-            # Stored files are "<sha256>_<originalname>", as above.
-            if name[:64] not in wanted or name[64:65] != "_":
-                continue
-            if not entry.is_file():
-                continue
-            names_by_id.setdefault(name[:64], []).append(name[65:])
-    return {
-        fid: sorted(names)
-        for fid, names in names_by_id.items()
-        if len(names) > 1
-    }
 
 
 def original_filename(stored: Any) -> str:

@@ -173,22 +173,33 @@ def paths_for(file_ids) -> dict:
     return {fid: v for fid, v in read_all().items() if fid in wanted}
 
 
-def decorate_names(recorded, names):
-    """Return ``names`` with each one replaced by its recorded path, if any.
+def sanitize_duplicate_paths(raw) -> dict:
+    """Clean a client's "these paths were the same bytes" map for display.
 
-    Matching is by basename, because the recorded path and the stored name were
-    produced from the same upload. A name with no recorded path is returned
-    unchanged -- everything uploaded before this store existed is in that case,
-    and an operator must see the filename rather than a blank or "unknown".
+    One registration reports its own collapsed copies from the paths that
+    run's client sent with it, so the figures are closed over a single run and
+    no other registration, index or stored file can leak into them. This is the
+    gate that payload passes through.
+
+    Every path goes through :func:`sanitize_relative_path`, the one validation
+    path for client-supplied paths; a refused one is dropped rather than
+    repaired. Keys must be real file_ids. Paths are de-duplicated and sorted,
+    and an id left with fewer than two distinct paths is dropped: one path is
+    not a collapsed copy, and leaving it in would make the counts wrong.
+
+    Bounded on purpose. A selection of ten thousand files yields a map of the
+    few hundred ids that had copies, and ``_MAX_PATHS_PER_ID`` keeps a single
+    forged id from growing the report without limit.
     """
-    if not recorded:
-        return list(names or [])
-    by_base: dict = {}
-    for value in recorded:
-        by_base.setdefault(str(value).rsplit("/", 1)[-1], []).append(value)
-    out: list = []
-    for name in names or []:
-        base = str(name).replace("\\", "/").rsplit("/", 1)[-1]
-        candidates = by_base.get(base)
-        out.append(candidates.pop(0) if candidates else name)
+    out: dict = {}
+    if not isinstance(raw, dict):
+        return out
+    for fid, values in raw.items():
+        if not isinstance(fid, str) or not _FILE_ID_RE.match(fid):
+            continue
+        if isinstance(values, str) or not isinstance(values, (list, tuple)):
+            continue
+        clean = sorted({p for p in (sanitize_relative_path(v) for v in values) if p})
+        if len(clean) > 1:
+            out[fid] = clean[:_MAX_PATHS_PER_ID]
     return out

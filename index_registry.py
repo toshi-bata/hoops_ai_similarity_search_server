@@ -79,9 +79,8 @@ import embeddings
 # ``_env_int(...)`` call sites moved here keep working unchanged.
 from config import _env_int
 # ``map_persistent_CAD_files`` is a stable storage helper (never swapped), read
-# by the body-level embedding pass. ``map_duplicate_CAD_filenames`` is the same
-# kind of helper, read by ``get_index_duplicate_names``.
-from storage import map_persistent_CAD_files, map_duplicate_CAD_filenames
+# by the body-level embedding pass.
+from storage import map_persistent_CAD_files
 # Stable, never-rebound names owned by embeddings.py, reached bare by the code
 # moved here (model-key constants, checkpoint hashing, the intra-op thread cap
 # and the L2 normaliser). The swappable embedder names are reached as
@@ -1682,55 +1681,6 @@ def check_index_model_consistency(name: str) -> dict[str, Any]:
         "mismatching_files": mismatching,
         "unknown_files": unknown,
         "status": status,
-    }
-
-
-def get_index_duplicate_names(name: str) -> dict[str, Any]:
-    """Report which of the index's geometries were registered under several names.
-
-    file_ids are content hashes, so byte-identical CAD files collapse into a
-    single index entry no matter how many times they are uploaded. The entry is
-    never duplicated. What does survive is the original filenames: a client
-    registering a folder uploads every copy, and the store keeps one
-    ``<sha256>_<originalname>`` per name. This is the only place that difference
-    is reported.
-
-    Returns ``name``, ``total`` (geometries carrying more than one original
-    filename), ``extra_copies`` (how many of those filenames are redundant, i.e.
-    all of them minus one per geometry) and ``items``, a list of
-    ``{"file_id", "names"}`` sorted by file_id so paging over it is stable.
-    A name is shown with the folder the client uploaded it from when one was
-    recorded, which is what distinguishes two copies in one folder from the
-    same part reused across two assemblies; anything uploaded before that was
-    recorded keeps the bare filename. Filenames and client-supplied folders
-    only -- no server paths.
-
-    One directory scan, bounded by the store size, exactly like
-    :func:`add_to_index`'s path resolve; it is not run on search or at startup.
-
-    Raises ``KeyError`` when the index does not exist.
-    """
-    _validate_index_name(name)
-    _require_index_exists(name)
-    names_by_id = map_duplicate_CAD_filenames(list(_registered_index_ids(name)))
-    try:
-        relative = upload_paths.paths_for(names_by_id.keys())
-    except Exception:  # display data only
-        logger.debug("upload paths unavailable", exc_info=True)
-        relative = {}
-    items = [
-        {
-            "file_id": fid,
-            "names": upload_paths.decorate_names(relative.get(fid), names),
-        }
-        for fid, names in sorted(names_by_id.items())
-    ]
-    extra = sum(len(it["names"]) for it in items) - len(items)
-    return {
-        "name": name,
-        "total": len(items),
-        "extra_copies": extra,
-        "items": items,
     }
 
 

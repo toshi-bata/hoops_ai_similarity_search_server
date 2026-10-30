@@ -114,7 +114,6 @@ from storage import (
     known_persistent_CAD_file_ids,
     check_persistent_CAD_files,
     map_persistent_CAD_files,
-    map_duplicate_CAD_filenames,
     original_filename,
     delete_persistent_CAD_file,
     list_persistent_CAD_files,
@@ -236,7 +235,6 @@ from index_registry import (
     _TAG_FILTER_OVERFETCH_MAX,
     _tag_filtered_fetch_k,
     get_index_stats,
-    get_index_duplicate_names,
     check_index_model_consistency,
     _require_index_exists,
     _index_thumbnails_dir,
@@ -256,7 +254,7 @@ from index_registry import (
 from upload_paths import (
     record as record_upload_paths,
     paths_for as upload_paths_for,
-    decorate_names as decorate_upload_names,
+    sanitize_duplicate_paths,
     sanitize_relative_path,
 )
 

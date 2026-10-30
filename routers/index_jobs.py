@@ -9,7 +9,7 @@ has a job form.
 These endpoints are not demo-gated: bulk registration is a production feature.
 """
 import logging
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 import core
 import jobs
@@ -58,6 +58,24 @@ class IndexAddJobRequest(BaseModel):
             "HOOPS_AI_EMBED_TIME_LIMIT, or the SDK's own 120 s when that is "
             "unset. Files that exceed it are reported with retryable=true; "
             "resubmit them as a second job with a longer budget."
+        ),
+    )
+    selected_count: Optional[int] = Field(
+        None,
+        ge=0,
+        description=(
+            "How many files the caller picked, before byte-identical copies "
+            "collapsed into one file_id each. Display only: it lets the report "
+            "explain the gap between the selection and the index."
+        ),
+    )
+    duplicate_paths: Optional[Dict[str, List[str]]] = Field(
+        None,
+        description=(
+            "file_id -> the relative paths in THIS selection that turned out "
+            "to be the same bytes. Only ids with two or more paths belong "
+            "here. Display only: paths are sanitised and never touch the file "
+            "system, and nothing outside this request is consulted."
         ),
     )
 
@@ -284,6 +302,12 @@ def create_index_add_job(
         )
 
     store = jobs.get_index_job_store()
+    # Display data about this one submission, cleaned at the edge. The paths
+    # are never used to touch the file system; they exist so the report can
+    # name the files behind the gap between what was picked and what was
+    # registered.
+    collapsed = core.sanitize_duplicate_paths(payload.duplicate_paths)
+    selected_count = payload.selected_count
     record = store.create(
         kind=core.JOB_KIND_INDEX_ADD,
         params={
@@ -306,6 +330,8 @@ def create_index_add_job(
             unique_ids,
             num_workers=payload.workers,
             time_limit=payload.time_limit,
+            selected_count=selected_count,
+            collapsed_paths=collapsed,
         ),
     )
     logger.info(

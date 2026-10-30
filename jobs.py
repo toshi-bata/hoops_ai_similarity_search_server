@@ -163,17 +163,22 @@ def _write_add_job_report(
     failed: list[dict[str, Any]],
     heavy_flagged: list[str],
     timings: dict[str, Any],
-    duplicate_names: Optional[dict[str, list[str]]] = None,
+    collapsed_paths: Optional[dict[str, list[str]]] = None,
+    selected_count: Optional[int] = None,
 ) -> None:
     """Write the registration report (ADDED / FAILED / HEAVY-FLAGGED / DUPLICATES).
 
     The groups answer the operator's question directly: which parts are in the
     index, which are not and why (and whether a longer budget could still save
-    them), which files made the run slow, and which of the submitted files were
-    the same geometry arriving under more than one name. Written to disk rather
-    than into the job record because a corpus-sized job would otherwise put tens
-    of thousands of paths into a JSON document that is rewritten on every
-    progress update.
+    them), which files made the run slow, and -- when the caller said how many
+    files it picked -- why fewer went in than were chosen.
+
+    ``selected_count`` and ``collapsed_paths`` describe **this submission and
+    nothing else**: the paths come from the client that queued this job, so no
+    other registration, index or stored file can contribute a name to them.
+    Written to disk rather than into the job record because a corpus-sized job
+    would otherwise put tens of thousands of paths into a JSON document that is
+    rewritten on every progress update.
     """
     def _fmt(seconds: Any) -> str:
         try:
@@ -191,9 +196,11 @@ def _write_add_job_report(
         return f"{hms} ({secs:.1f}s)"
 
     retryable = [e for e in failed if e.get("retryable")]
-    duplicates = sorted((duplicate_names or {}).items())
-    # One geometry per entry, so the redundant names are all of them bar one.
-    extra_copies = sum(len(names) for _, names in duplicates) - len(duplicates)
+    collapsed = sorted((collapsed_paths or {}).items())
+    # One file_id per entry, so the copies that never reached the index are all
+    # the paths bar one.
+    extra_copies = sum(len(paths) for _, paths in collapsed) - len(collapsed)
+    submitted = len(added) + len(failed)
     lines: list[str] = []
     lines.append(
         "# Index registration report - "
@@ -219,10 +226,18 @@ def _write_add_job_report(
         f"time_limit={limit_text}"
     )
     lines.append(f"# Elapsed: {_fmt(timings.get('embed_seconds'))}")
+    # "selected" is what the caller picked; "input" is what reached the SDK.
+    # The two differ when the selection held byte-identical copies, and that
+    # difference is the thing [DUPLICATES] below explains.
+    if selected_count is not None:
+        lines.append(
+            f"# Selection: selected={selected_count} submitted={submitted} "
+            f"collapsed={max(0, selected_count - submitted)}"
+        )
     lines.append(
-        f"# Totals: input={len(added) + len(failed)} added={len(added)} "
+        f"# Totals: input={submitted} added={len(added)} "
         f"failed={len(failed)} retryable={len(retryable)} "
-        f"heavy_flagged={len(heavy_flagged)} duplicate_names={len(duplicates)}"
+        f"heavy_flagged={len(heavy_flagged)} collapsed_copies={extra_copies}"
     )
 
     lines.append("")
@@ -248,14 +263,15 @@ def _write_add_job_report(
 
     lines.append("")
     lines.append(
-        "[DUPLICATES] one geometry registered under several original filenames "
-        f"({len(duplicates)} geometr{'y' if len(duplicates) == 1 else 'ies'}, "
-        f"{extra_copies} redundant copy/copies). The index holds ONE entry for "
-        "each: identical bytes share a file_id, so nothing below is a duplicate "
-        "index entry."
+        "[DUPLICATES] files in THIS selection that were byte-identical to each "
+        f"other ({len(collapsed)} shape{'' if len(collapsed) == 1 else 's'}, "
+        f"{extra_copies} copy/copies not submitted). Only one of each reached "
+        "the index: a file_id is the SHA-256 of the bytes, so identical files "
+        "are one entry. This covers this registration only -- no other job, "
+        "index or previously stored file is consulted."
     )
-    for fid, names in duplicates:
-        lines.append(f"{fid}\t{', '.join(names)}")
+    for fid, paths in collapsed:
+        lines.append(f"{fid}\t{', '.join(paths)}")
 
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -267,6 +283,8 @@ def run_index_add_job(
     file_ids: list[str],
     num_workers: Optional[int] = None,
     time_limit: Optional[int] = None,
+    selected_count: Optional[int] = None,
+    collapsed_paths: Optional[dict[str, list[str]]] = None,
 ) -> None:
     """Job body: register *file_ids* into index *name* in a single SDK call.
 
@@ -291,6 +309,12 @@ def run_index_add_job(
 
     Failures are recorded per file with the reason reported by the SDK, never
     dropped.
+
+    ``selected_count`` and ``collapsed_paths`` are what the caller picked and
+    which of those files turned out to be the same bytes. Both are display
+    data supplied by the caller and are reported back unchanged: this job
+    explains its own submission, and scanning the store or another job's record
+    for extra names is exactly what it must not do.
     """
     total = len(file_ids)
     ctx.set_total(total)
@@ -420,21 +444,18 @@ def run_index_add_job(
     ctx.set_timings(**timings)
 
     failed_ids = {str(e.get("file_id") or "") for e in errors}
-    # Only this job's own inputs: the report is about this run, and the
-    # index-wide view lives behind GET .../duplicates. One scan of the CAD
-    # store, and never fatal -- a missing section must not cost a good report.
-    try:
-        duplicate_names = storage.map_duplicate_CAD_filenames(file_ids)
-        # Show each name with the folder it came from when one was recorded:
-        # that is what tells an operator whether the copies sat side by side or
-        # in two different assemblies.
-        duplicate_names = {
-            fid: upload_paths.decorate_names(relative_by_fid.get(fid), names)
-            for fid, names in duplicate_names.items()
-        }
-    except Exception as exc:
-        logger.warning("[JOB] could not collect duplicate names: %s", exc)
-        duplicate_names = {}
+    # This run's own accounting, from what the caller sent with the job. No
+    # directory scan and no cross-job lookup: a store-wide scan used to supply
+    # this and it mixed in names from registrations the reader never made.
+    collapsed = {
+        fid: paths for fid, paths in (collapsed_paths or {}).items()
+        if fid in set(file_ids)
+    }
+    redundant = sum(len(p) for p in collapsed.values()) - len(collapsed)
+    if selected_count is not None:
+        ctx.set_summary(selected=int(selected_count))
+    if collapsed:
+        ctx.set_summary(collapsed_copies=redundant)
     try:
         _write_add_job_report(
             artifacts / "report.txt",
@@ -443,7 +464,8 @@ def run_index_add_job(
             errors,
             heavy_flagged,
             timings,
-            duplicate_names,
+            collapsed,
+            selected_count,
         )
         ctx.set_summary(report=True)
     except Exception as exc:  # a missing report must never fail a good job

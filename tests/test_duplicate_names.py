@@ -1,15 +1,18 @@
-"""Tests for reporting one geometry registered under several filenames.
+"""Explaining the gap between the folder a user picked and the index.
 
-file_ids are content hashes, so byte-identical CAD files become a single index
-entry however many times they are uploaded. What survives the collapse is the
-original filename each copy arrived with, which the store keeps as a separate
-``<sha256>_<originalname>`` file and which nothing used to report. These cover
-the three places that now do: the storage scan, GET .../duplicates, and the
-``[DUPLICATES]`` section of the registration report.
+A file_id is the SHA-256 of a CAD file's bytes, so byte-identical files
+collapse into a single index entry. A client that registers a folder therefore
+sees "10897 CAD file(s) selected" and a report that says ``input=10250``; the
+647 missing from the index are the copies that shared a file_id with another
+file in the same selection.
 
-SDK-free: the CAD store is a tmp directory of empty files, so no license, no
-faiss and no real index is involved. The server's own data/ directory is never
-read.
+The figures come from the client that queued the job and describe **that
+submission only**. An earlier version scanned the whole CAD store for names,
+which mixed in filenames from registrations the reader had never made; the
+first test class below is the guard against that returning.
+
+SDK-free: no license, no faiss and no real index. The server's own data/
+directory is never read.
 """
 
 import os
@@ -18,277 +21,195 @@ import re
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
-
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-import core  # noqa: E402
-import index_registry  # noqa: E402
 import jobs  # noqa: E402
-import storage  # noqa: E402
+import upload_paths  # noqa: E402
 
-# Config helpers on the import path read the environment, and a developer's
-# .env must not decide whether a test passes.
-_ENV = {
-    "HOOPS_AI_DATA_DIR": "C:\\tmp\\data",
-    "HOOPS_LICENSE": "x",
-}
+REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 
-# Three distinct content hashes. Real ids are 64 lower-case hex characters and
-# the scan slices on that width, so the fakes have to be the real shape.
+# Real ids are 64 lower-case hex characters and the sanitiser checks that
+# width, so the fakes have to be the real shape.
 _ID_A = "a" * 64
 _ID_B = "b" * 64
-_ID_C = "c" * 64
 
 
-def _make_app():
-    from routers.similarity import router
-
-    app = FastAPI()
-    app.include_router(router)
-    return app
-
-
-class _StoreTestCase(unittest.TestCase):
-    """A tmp CAD store holding two names for _ID_A and one each for B and C."""
-
-    def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self._tmp.cleanup)
-        self.store = pathlib.Path(self._tmp.name)
-        for name in (
-            f"{_ID_A}_bracket.stp",
-            f"{_ID_A}_bracket_rev_b.stp",
-            f"{_ID_B}_housing.stp",
-            f"{_ID_C}_shaft.stp",
-        ):
-            (self.store / name).write_bytes(b"")
-        # A directory and a stray file must both be ignored by the scan.
-        (self.store / f"{_ID_B}_adirectory").mkdir()
-        (self.store / "not-a-stored-file.txt").write_bytes(b"")
-        patcher = patch.object(storage, "get_CAD_shared_dir", return_value=self.store)
-        patcher.start()
-        self.addCleanup(patcher.stop)
-
-
-class MapDuplicateFilenamesTests(_StoreTestCase):
-    """storage.map_duplicate_CAD_filenames over a faked store."""
-
-    def test_only_ids_with_several_names_come_back(self):
-        result = storage.map_duplicate_CAD_filenames([_ID_A, _ID_B, _ID_C])
-        self.assertEqual(
-            result, {_ID_A: ["bracket.stp", "bracket_rev_b.stp"]}
+def _report(collapsed=None, selected=None, added=("a.stp",), failed=()):
+    """Render a registration report and return its text."""
+    with tempfile.TemporaryDirectory() as tmp:
+        path = pathlib.Path(tmp) / "report.txt"
+        jobs._write_add_job_report(
+            path, "tmcad", list(added), list(failed), [], {},
+            collapsed, selected,
         )
-
-    def test_the_sha256_prefix_is_stripped_and_no_path_is_returned(self):
-        names = storage.map_duplicate_CAD_filenames([_ID_A])[_ID_A]
-        for n in names:
-            self.assertNotIn(_ID_A, n)
-            self.assertNotIn(os.sep, n)
-
-    def test_ids_outside_the_request_are_not_scanned_in(self):
-        self.assertEqual(storage.map_duplicate_CAD_filenames([_ID_B, _ID_C]), {})
-
-    def test_an_empty_request_reads_nothing(self):
-        self.assertEqual(storage.map_duplicate_CAD_filenames([]), {})
-
-    def test_the_single_path_resolver_still_answers_once_per_id(self):
-        # The companion scan must keep its one-path-per-id contract: other
-        # callers (the embedding pass) depend on it.
-        paths = storage.map_persistent_CAD_files([_ID_A, _ID_B])
-        self.assertEqual(sorted(paths), sorted([_ID_A, _ID_B]))
-        self.assertIsInstance(paths[_ID_A], pathlib.Path)
+        return path.read_text(encoding="utf-8")
 
 
-class IndexDuplicateNamesTests(_StoreTestCase):
-    """index_registry.get_index_duplicate_names over a faked index."""
+class RunLocalOnlyTests(unittest.TestCase):
+    """The defect this feature was rebuilt for: names from another run.
 
-    def _duplicates(self, ids):
-        with patch.object(
-            index_registry, "_require_index_exists", return_value=None
-        ), patch.object(
-            index_registry, "_registered_index_ids", return_value=set(ids)
-        ):
-            return index_registry.get_index_duplicate_names("tmcad")
+    Registering the same geometry twice, from two different folders, must give
+    two reports that each name only their own folder. Nothing is shared between
+    them, so the second report cannot know the first one's path.
+    """
 
-    def test_counts_shapes_and_redundant_copies(self):
-        result = self._duplicates([_ID_A, _ID_B, _ID_C])
-        self.assertEqual(result["name"], "tmcad")
-        self.assertEqual(result["total"], 1)
-        # Two names for one geometry is one redundant copy.
-        self.assertEqual(result["extra_copies"], 1)
-        self.assertEqual(
-            result["items"],
-            [{"file_id": _ID_A, "names": ["bracket.stp", "bracket_rev_b.stp"]}],
-        )
+    def test_a_later_run_does_not_inherit_an_earlier_runs_paths(self):
+        first = {_ID_A: ["old_project/bracket.stp", "old_project/copy.stp"]}
+        second = {_ID_A: ["new_project/part.stp", "new_project/part_rev_b.stp"]}
+        text = _report(second, selected=2)
+        self.assertIn("new_project/part.stp", text)
+        for path in first[_ID_A]:
+            self.assertNotIn(path, text)
 
-    def test_an_index_without_duplicates_reports_zero(self):
-        result = self._duplicates([_ID_B, _ID_C])
-        self.assertEqual(result["total"], 0)
-        self.assertEqual(result["extra_copies"], 0)
-        self.assertEqual(result["items"], [])
-
-    def test_a_missing_index_is_a_key_error(self):
-        with patch.object(
-            index_registry, "_index_faiss_path",
-            return_value=self.store / "nope.faiss",
-        ):
-            with self.assertRaises(KeyError):
-                index_registry.get_index_duplicate_names("tmcad")
-
-    def test_core_reexports_it(self):
-        self.assertIs(core.get_index_duplicate_names,
-                      index_registry.get_index_duplicate_names)
-
-
-class DuplicatesEndpointTests(unittest.TestCase):
-    """GET /similarity/index/{name}/duplicates."""
-
-    def setUp(self):
-        patcher = patch.dict(os.environ, _ENV, clear=True)
-        patcher.start()
-        self.addCleanup(patcher.stop)
-        self.client = TestClient(_make_app())
-        self.payload = {
-            "name": "tmcad",
-            "total": 2,
-            "extra_copies": 3,
-            "items": [
-                {"file_id": _ID_A, "names": ["bracket.stp", "bracket_rev_b.stp"]},
-                {"file_id": _ID_B, "names": ["h.stp", "h2.stp", "h3.stp"]},
-            ],
-        }
-
-    def _get(self, query="", payload=None):
-        with patch.object(
-            core, "get_index_duplicate_names",
-            return_value=payload if payload is not None else self.payload,
-        ):
-            return self.client.get(f"/similarity/index/tmcad/duplicates{query}")
-
-    def test_returns_the_counts_and_the_items(self):
-        resp = self._get()
-        self.assertEqual(resp.status_code, 200)
-        body = resp.json()
-        self.assertEqual(body["total"], 2)
-        self.assertEqual(body["extra_copies"], 3)
-        self.assertEqual(len(body["items"]), 2)
-        self.assertEqual(body["items"][0]["names"],
-                         ["bracket.stp", "bracket_rev_b.stp"])
-
-    def test_the_counts_cover_the_index_not_the_page(self):
-        # A page of one must still report both geometries and all three
-        # redundant copies, or the headline figure would shrink with the page.
-        body = self._get("?limit=1").json()
-        self.assertEqual(len(body["items"]), 1)
-        self.assertEqual(body["total"], 2)
-        self.assertEqual(body["extra_copies"], 3)
-        self.assertEqual(body["limit"], 1)
-
-    def test_offset_skips_items(self):
-        body = self._get("?offset=1").json()
-        self.assertEqual([it["file_id"] for it in body["items"]], [_ID_B])
-        self.assertEqual(body["offset"], 1)
-
-    def test_no_server_path_is_exposed(self):
-        # The names must be bare filenames: the layout of the CAD store is not
-        # the client's business.
-        body = self._get().json()
-        for item in body["items"]:
-            for n in item["names"]:
-                self.assertNotIn("/", n)
-                self.assertNotIn("\\", n)
-        self.assertNotIn("uploads", self._get().text)
-
-    def test_a_missing_index_is_404(self):
-        with patch.object(
-            core, "get_index_duplicate_names", side_effect=KeyError("Index 'x'")
-        ):
-            resp = self.client.get("/similarity/index/tmcad/duplicates")
-        self.assertEqual(resp.status_code, 404)
-
-    def test_an_invalid_name_is_rejected_before_any_scan(self):
-        with patch.object(core, "get_index_duplicate_names") as fn:
-            resp = self.client.get("/similarity/index/Bad%20Name/duplicates")
-        self.assertEqual(resp.status_code, 422)
-        fn.assert_not_called()
-
-
-class ReportDuplicatesSectionTests(unittest.TestCase):
-    """The [DUPLICATES] section of the registration report."""
-
-    def _report(self, duplicate_names):
-        with tempfile.TemporaryDirectory() as tmp:
-            path = pathlib.Path(tmp) / "report.txt"
-            jobs._write_add_job_report(
-                path, "tmcad", ["a.stp"], [], [], {},
-                duplicate_names,
-            )
-            return path.read_text(encoding="utf-8")
-
-    def test_the_section_lists_every_name_of_each_geometry(self):
-        text = self._report({_ID_A: ["bracket.stp", "bracket_rev_b.stp"]})
+    def test_a_run_that_sends_nothing_reports_nothing(self):
+        # No selection information means no claim about one. A store scan would
+        # have invented names here.
+        text = _report(None, selected=None)
         self.assertIn("[DUPLICATES]", text)
-        self.assertIn(f"{_ID_A}\tbracket.stp, bracket_rev_b.stp", text)
+        self.assertIn("0 shapes", text)
+        self.assertNotIn("# Selection:", text)
 
-    def test_the_header_counts_the_geometries(self):
-        text = self._report({
+    def test_only_ids_this_job_submitted_are_reported(self):
+        """jobs.py filters the caller's map down to the job's own inputs."""
+        source = (REPO_ROOT / "jobs.py").read_text(encoding="utf-8")
+        body = source[source.index("def run_index_add_job("):]
+        self.assertIn("if fid in set(file_ids)", body)
+        # The store-wide scan must not come back.
+        self.assertNotIn("map_duplicate_CAD_filenames", source)
+
+
+class CollapsedCopiesSectionTests(unittest.TestCase):
+    """The [DUPLICATES] section and the selection accounting above it."""
+
+    def test_the_section_lists_every_path_of_each_shape(self):
+        text = _report({_ID_A: ["asm/bracket.stp", "asm/bracket_rev_b.stp"]})
+        self.assertIn("[DUPLICATES]", text)
+        self.assertIn(f"{_ID_A}\tasm/bracket.stp, asm/bracket_rev_b.stp", text)
+
+    def test_the_header_counts_the_copies_that_did_not_go_in(self):
+        text = _report({
             _ID_A: ["a.stp", "a2.stp"],
             _ID_B: ["b.stp", "b2.stp", "b3.stp"],
         })
-        self.assertIn("duplicate_names=2", text)
-        self.assertIn("2 geometries, 3 redundant copy/copies", text)
+        self.assertIn("collapsed_copies=3", text)
+        self.assertIn("2 shapes", text)
+
+    def test_the_section_says_it_covers_this_selection_only(self):
+        # The wording is the point: a reader must not take it for a statement
+        # about the index, nor conclude the index holds duplicate entries.
+        text = _report({_ID_A: ["a.stp", "a2.stp"]})
+        self.assertIn("THIS selection", text)
+        self.assertIn("this registration only", text)
 
     def test_the_section_is_present_even_when_empty(self):
-        # Absence of the section would be indistinguishable from an older
-        # report, so it is always written.
-        text = self._report({})
-        self.assertIn("[DUPLICATES]", text)
-        self.assertIn("duplicate_names=0", text)
+        # Absence would be indistinguishable from an older report.
+        self.assertIn("[DUPLICATES]", _report({}))
 
-    def test_the_section_says_the_index_holds_one_entry_each(self):
-        # The wording is the point: a reader must not conclude the index has
-        # duplicate entries.
-        text = self._report({_ID_A: ["a.stp", "a2.stp"]})
-        self.assertIn("ONE entry", text)
+    def test_the_gap_between_selection_and_submission_is_stated(self):
+        text = _report({_ID_A: ["a.stp", "a2.stp"]}, selected=3, added=["a.stp", "b.stp"])
+        self.assertIn("# Selection: selected=3 submitted=2 collapsed=1", text)
 
-    def test_the_argument_is_optional(self):
-        # Callers that have nothing to say must still be able to write one.
+    def test_the_arguments_are_optional(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = pathlib.Path(tmp) / "report.txt"
             jobs._write_add_job_report(path, "tmcad", [], [], [], {})
             self.assertIn("[DUPLICATES]", path.read_text(encoding="utf-8"))
 
 
-class DuplicatePanelHeadingTests(unittest.TestCase):
-    """The panel heading has to name the index, not the pending selection.
+class SanitizeDuplicatePathsTests(unittest.TestCase):
+    """The one gate the client's map passes through."""
 
-    The panel lives inside the Register dialog and is filled when the modal
-    opens, before a folder is even picked, so a heading that only says "same
-    geometry, several filenames" was read as a report on the files about to be
-    registered. A shortening would bring that misreading straight back.
-    """
-
-    def _heading(self):
-        html = (
-            pathlib.Path(__file__).resolve().parents[1] / "web" / "index.html"
-        ).read_text(encoding="utf-8")
-        match = re.search(
-            r'<h3 class="register-duplicates-title">(.*?)</h3>', html, re.S
+    def test_paths_are_cleaned_and_sorted(self):
+        got = upload_paths.sanitize_duplicate_paths(
+            {_ID_A: ["asm\\b.stp", "./asm/a.stp"]}
         )
-        self.assertIsNotNone(match, "web/index.html has no duplicates heading")
-        return match.group(1).strip()
+        self.assertEqual(got, {_ID_A: ["asm/a.stp", "asm/b.stp"]})
 
-    def test_the_heading_says_it_is_about_the_index(self):
-        self.assertIn("index", self._heading().lower())
+    def test_a_traversal_path_is_dropped(self):
+        got = upload_paths.sanitize_duplicate_paths(
+            {_ID_A: ["..\\..\\x.stp", "C:\\Windows\\y.stp", "ok/a.stp", "ok/b.stp"]}
+        )
+        self.assertEqual(got, {_ID_A: ["ok/a.stp", "ok/b.stp"]})
 
-    def test_the_heading_says_the_geometries_are_already_there(self):
-        # "already" is what separates "what is in the index" from "what this
-        # run will add".
-        self.assertIn("already", self._heading().lower())
+    def test_an_id_left_with_one_path_is_dropped(self):
+        # One path is not a collapsed copy; keeping it would overstate the gap.
+        self.assertEqual(
+            upload_paths.sanitize_duplicate_paths({_ID_A: ["../evil", "ok.stp"]}),
+            {},
+        )
+
+    def test_a_forged_file_id_is_refused(self):
+        for key in ("", "not-a-hash", "A" * 64, "a" * 63):
+            with self.subTest(key=key):
+                self.assertEqual(
+                    upload_paths.sanitize_duplicate_paths({key: ["a.stp", "b.stp"]}),
+                    {},
+                )
+
+    def test_a_single_id_cannot_grow_without_limit(self):
+        many = [f"d{i}/a.stp" for i in range(50)]
+        got = upload_paths.sanitize_duplicate_paths({_ID_A: many})
+        self.assertEqual(len(got[_ID_A]), upload_paths._MAX_PATHS_PER_ID)
+
+    def test_junk_is_survived(self):
+        for raw in (None, [], "paths", {_ID_A: "a.stp"}, {_ID_A: None}):
+            with self.subTest(raw=raw):
+                self.assertEqual(upload_paths.sanitize_duplicate_paths(raw), {})
+
+
+class ClientShowsTheGapOnlyInTheResultTests(unittest.TestCase):
+    """Nothing about duplicates may appear before a folder has been picked."""
+
+    def _register_js(self):
+        return (REPO_ROOT / "web" / "src" / "register.js").read_text(encoding="utf-8")
+
+    def test_the_gap_is_written_when_a_job_settles(self):
+        body = self._register_js()
+        start = body.index("async function onJobSettled(")
+        end = body.index("async function resubmit(")
+        self.assertIn("gapLine", body[start:end])
+
+    def test_nothing_duplicate_related_runs_on_open(self):
+        body = self._register_js()
+        start = body.index("function open() {")
+        end = body.index("function close() {")
+        opening = body[start:end]
+        for forbidden in ("gapLine", "Duplicates", "duplicate"):
+            with self.subTest(token=forbidden):
+                self.assertNotIn(forbidden, opening)
+
+    def test_the_removed_panel_is_gone(self):
+        html = (REPO_ROOT / "web" / "index.html").read_text(encoding="utf-8")
+        self.assertNotIn("register-duplicates", html)
+        css = (REPO_ROOT / "web" / "src" / "styles.css").read_text(encoding="utf-8")
+        self.assertNotIn("register-duplicates", css)
+
+    def test_the_removed_endpoint_is_gone(self):
+        api = (REPO_ROOT / "web" / "src" / "api.js").read_text(encoding="utf-8")
+        self.assertNotIn("getIndexDuplicates", api)
+        router = (REPO_ROOT / "routers" / "similarity.py").read_text(encoding="utf-8")
+        self.assertNotIn('"/index/{name}/duplicates"', router)
+        self.assertNotIn("get_index_duplicate_names", router)
+
+    def test_the_selection_is_sent_with_the_job(self):
+        body = self._register_js()
+        self.assertIn("selectedCount: selectedFiles.length", body)
+        self.assertIn("duplicatePaths: collapsed", body)
+        api = (REPO_ROOT / "web" / "src" / "api.js").read_text(encoding="utf-8")
+        self.assertIn("duplicate_paths: duplicatePaths", api)
+
+
+class HtmlPatternTests(unittest.TestCase):
+    """The result pane carries the gap line, and only it."""
+
+    def test_the_gap_line_lives_inside_the_result_box(self):
+        html = (REPO_ROOT / "web" / "index.html").read_text(encoding="utf-8")
+        match = re.search(
+            r'<div id="register-result".*?</div>\s*</div>', html, re.S
+        )
+        self.assertIsNotNone(match, "web/index.html has no register-result box")
+        self.assertIn('id="register-gap"', match.group(0))
 
 
 if __name__ == "__main__":

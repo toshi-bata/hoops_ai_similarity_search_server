@@ -591,29 +591,20 @@
           <button id="register-cancel" type="button" class="register-cancel">Cancel</button>
         </div>
 
-        <!-- Result summary + report + resubmit-retryable action. -->
+        <!-- Result summary + report + resubmit-retryable action. The summary
+             line also states the gap between what was selected and what was
+             registered, and the report's [DUPLICATES] section names the files
+             behind it. Both are written only once a run has finished: an
+             earlier version showed index-wide duplicate names here before a
+             folder was even picked, and it was read twice as a statement about
+             the folder about to be registered. -->
         <div id="register-result" class="register-result" hidden>
           <div id="register-summary" class="register-summary"></div>
+          <div id="register-gap" class="register-summary" hidden></div>
           <div class="register-result-actions">
             <button id="register-resubmit" type="button" hidden>Resubmit retryable failures</button>
           </div>
           <pre id="register-report" class="register-report"></pre>
-        </div>
-
-        <!-- Index-wide duplicate-name notice. Not duplicate index entries:
-             file_ids are content hashes, so identical bytes are ONE entry. What
-             is listed here is the geometries that arrived under more than one
-             original filename. Filled whenever the modal opens and after a job
-             settles; see src/register.js.
-
-             The heading has to say "already in this index" because the panel
-             sits inside the Register dialog and shows before a folder is even
-             picked, so a shorter wording ("Same geometry, several filenames")
-             was read as a report on the files about to be registered. -->
-        <div id="register-duplicates" class="register-duplicates" hidden>
-          <h3 class="register-duplicates-title">Already in this index: same geometry under several filenames</h3>
-          <div id="register-duplicates-summary" class="register-summary"></div>
-          <pre id="register-duplicates-list" class="register-report"></pre>
         </div>
 
         <!-- Recent jobs for this index. -->

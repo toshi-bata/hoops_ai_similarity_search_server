@@ -54,12 +54,10 @@ export function createRegister({ getIndexName, onJobComplete }) {
   const cancelButton = el('register-cancel');
   const resultBox = el('register-result');
   const summaryLine = el('register-summary');
+  const gapLine = el('register-gap');
   const resubmitButton = el('register-resubmit');
   const reportPre = el('register-report');
   const jobsList = el('register-jobs-list');
-  const duplicatesBox = el('register-duplicates');
-  const duplicatesSummary = el('register-duplicates-summary');
-  const duplicatesList = el('register-duplicates-list');
   const folderInput = el('register-folder-input');
   const filesInput = el('register-files-input');
   const dropZone = el('register-drop');
@@ -324,7 +322,33 @@ export function createRegister({ getIndexName, onJobComplete }) {
       }
     }
 
-    return { fileIds: [...known, ...uploadedIds], uploadErrors, invalidCount };
+    // Which of the picked files were byte-identical to each other. Computed
+    // from this selection alone -- the hashes above are the server's file_ids,
+    // so two paths sharing one hash are two names for one geometry and only
+    // the first of them can reach the index. The folder path is used when the
+    // pick carried one, the bare filename otherwise; this is display data for
+    // the report and never touches the file system.
+    const collapsed = {};
+    if (canHash) {
+      const pathsByHash = new Map();
+      files.forEach((f, i) => {
+        const where = f.webkitRelativePath || f.name || '';
+        if (!where) return;
+        const list = pathsByHash.get(hashes[i]) || [];
+        if (!list.includes(where)) list.push(where);
+        pathsByHash.set(hashes[i], list);
+      });
+      for (const [fid, list] of pathsByHash) {
+        if (list.length > 1) collapsed[fid] = list;
+      }
+    }
+
+    return {
+      fileIds: [...known, ...uploadedIds],
+      uploadErrors,
+      invalidCount,
+      collapsed,
+    };
   }
 
   // Returns { options } on success, or { error } if an entered value fails
@@ -387,12 +411,21 @@ export function createRegister({ getIndexName, onJobComplete }) {
     let queued = false;
     try {
       resetRunUi();
-      const { fileIds, uploadErrors, invalidCount } = await uploadMissing(selectedFiles);
+      const { fileIds, uploadErrors, invalidCount, collapsed } =
+        await uploadMissing(selectedFiles);
       const warnings = [];
       if (uploadErrors.length) warnings.push(`${uploadErrors.length} file(s) could not be uploaded`);
       if (invalidCount) warnings.push(`${invalidCount} file(s) had an invalid id and were re-uploaded`);
       if (warnings.length) setPhase(`${warnings.join('; ')}; continuing with the rest.`);
-      queued = await queueAndFollow(name, fileIds, options, {
+      // Tell the job what this run picked, so its report can account for the
+      // difference between that and what it registered. Sent with the job, not
+      // looked up afterwards: the figures must describe this submission only.
+      const jobOptions = {
+        ...options,
+        selectedCount: selectedFiles.length,
+        duplicatePaths: collapsed,
+      };
+      queued = await queueAndFollow(name, fileIds, jobOptions, {
         embedFrom: STAGE_QUEUE_END,
         embedTo: 100,
         // A run that reached the server must not be repeatable by pressing the
@@ -481,6 +514,30 @@ export function createRegister({ getIndexName, onJobComplete }) {
     if (job.detail) summaryBits.push(job.detail);
     summaryLine.textContent = summaryBits.join('  \u00b7  ');
 
+    // The gap between what was picked and what was registered, stated where
+    // the result is read. It is shown only now, never before a folder is
+    // chosen: the figures are about this run's own selection, and an earlier
+    // index-wide version of this notice was twice read as a verdict on the
+    // folder the user was about to register. The report's [DUPLICATES] section
+    // below names the files behind the number.
+    const selected = s.selected;
+    const registered = (s.added ?? 0) + (s.failed ?? 0);
+    if (selected != null && selected > registered) {
+      gapLine.textContent =
+        `You picked ${selected} file(s); ${registered} went to the index. The ` +
+        `other ${selected - registered} were byte-identical copies of files ` +
+        'in the same selection, so they share one entry. See [DUPLICATES] below.';
+      gapLine.hidden = false;
+    } else if (selected != null) {
+      gapLine.textContent =
+        `You picked ${selected} file(s) and all ${registered} went to the ` +
+        'index: no two of them held identical geometry.';
+      gapLine.hidden = false;
+    } else {
+      gapLine.textContent = '';
+      gapLine.hidden = true;
+    }
+
     retryableIds = (job.errors || [])
       .filter((e) => e.retryable && e.file_id)
       .map((e) => e.file_id);
@@ -513,9 +570,6 @@ export function createRegister({ getIndexName, onJobComplete }) {
     }
 
     await refreshJobs(name);
-    // A run that registered new files may have brought in fresh copies of a
-    // geometry already in the index, so re-ask rather than leave a stale count.
-    await refreshDuplicates(name).catch(() => {});
     if (typeof onJobComplete === 'function') {
       try {
         await onJobComplete();
@@ -597,45 +651,6 @@ export function createRegister({ getIndexName, onJobComplete }) {
 
   // -- Modal open/close -----------------------------------------------------
 
-  // Show which geometries in the index carry more than one original filename.
-  //
-  // These are NOT duplicate index entries. A file_id is the SHA-256 of the
-  // file's bytes, so identical files collapse into one entry however many
-  // times they are registered; what differs is only the filename each copy was
-  // uploaded under, which nothing in the UI would otherwise reveal. It is
-  // shown here because this modal is where registering happens -- the action
-  // that creates the condition -- and it already owns the plain-text pane
-  // idiom used for the job report.
-  //
-  // Never fatal: the index may be empty or brand new, and a failed diagnostic
-  // must not stop anyone from registering parts.
-  async function refreshDuplicates(name) {
-    duplicatesBox.hidden = true;
-    duplicatesSummary.textContent = '';
-    duplicatesList.textContent = '';
-    let report;
-    try {
-      report = await api.getIndexDuplicates(name);
-    } catch {
-      return;
-    }
-    if (!report || !report.total) return;
-    const shapes = `${report.total} shape(s)`;
-    const copies = `${report.extra_copies} redundant copy/copies`;
-    duplicatesSummary.textContent =
-      `${shapes} in "${name}" were registered under two or more original ` +
-      `filenames (${copies}). The index holds one entry for each: identical ` +
-      'files share a file_id, so no entry is duplicated.';
-    const items = report.items || [];
-    const lines = items.map((it) => `${it.file_id}\n    ${(it.names || []).join('\n    ')}`);
-    // The response is paginated; say so rather than silently showing a prefix.
-    if (items.length < report.total) {
-      lines.push(`... ${report.total - items.length} more not shown.`);
-    }
-    duplicatesList.textContent = lines.join('\n');
-    duplicatesBox.hidden = false;
-  }
-
   function open() {
     const name = getIndexName();
     if (!name) return;
@@ -646,7 +661,6 @@ export function createRegister({ getIndexName, onJobComplete }) {
     indexLabel.textContent = `Index: ${name}`;
     modal.hidden = false;
     refreshJobs(name);
-    refreshDuplicates(name).catch(() => {});
   }
 
   function close() {
@@ -667,7 +681,6 @@ export function createRegister({ getIndexName, onJobComplete }) {
     indexLabel.textContent = `Index: ${name}`;
     modal.hidden = false;
     setPhase(`Registering "${filename || fileId}"\u2026`);
-    refreshDuplicates(name).catch(() => {});
     queueAndFollow(name, [fileId], {});
   }
 
