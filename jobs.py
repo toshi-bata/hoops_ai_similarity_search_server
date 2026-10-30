@@ -157,15 +157,17 @@ def _write_add_job_report(
     failed: list[dict[str, Any]],
     heavy_flagged: list[str],
     timings: dict[str, Any],
+    duplicate_names: Optional[dict[str, list[str]]] = None,
 ) -> None:
-    """Write the three-group registration report (ADDED / FAILED / HEAVY-FLAGGED).
+    """Write the registration report (ADDED / FAILED / HEAVY-FLAGGED / DUPLICATES).
 
     The groups answer the operator's question directly: which parts are in the
     index, which are not and why (and whether a longer budget could still save
-    them), and which files made the run slow. Written to disk rather than into
-    the job record because a corpus-sized job would otherwise put tens of
-    thousands of paths into a JSON document that is rewritten on every progress
-    update.
+    them), which files made the run slow, and which of the submitted files were
+    the same geometry arriving under more than one name. Written to disk rather
+    than into the job record because a corpus-sized job would otherwise put tens
+    of thousands of paths into a JSON document that is rewritten on every
+    progress update.
     """
     def _fmt(seconds: Any) -> str:
         try:
@@ -183,6 +185,9 @@ def _write_add_job_report(
         return f"{hms} ({secs:.1f}s)"
 
     retryable = [e for e in failed if e.get("retryable")]
+    duplicates = sorted((duplicate_names or {}).items())
+    # One geometry per entry, so the redundant names are all of them bar one.
+    extra_copies = sum(len(names) for _, names in duplicates) - len(duplicates)
     lines: list[str] = []
     lines.append(
         "# Index registration report - "
@@ -197,7 +202,7 @@ def _write_add_job_report(
     lines.append(
         f"# Totals: input={len(added) + len(failed)} added={len(added)} "
         f"failed={len(failed)} retryable={len(retryable)} "
-        f"heavy_flagged={len(heavy_flagged)}"
+        f"heavy_flagged={len(heavy_flagged)} duplicate_names={len(duplicates)}"
     )
 
     lines.append("")
@@ -220,6 +225,17 @@ def _write_add_job_report(
         f"({len(heavy_flagged)})"
     )
     lines.extend(heavy_flagged)
+
+    lines.append("")
+    lines.append(
+        "[DUPLICATES] one geometry registered under several original filenames "
+        f"({len(duplicates)} geometr{'y' if len(duplicates) == 1 else 'ies'}, "
+        f"{extra_copies} redundant copy/copies). The index holds ONE entry for "
+        "each: identical bytes share a file_id, so nothing below is a duplicate "
+        "index entry."
+    )
+    for fid, names in duplicates:
+        lines.append(f"{fid}\t{', '.join(names)}")
 
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -351,6 +367,14 @@ def run_index_add_job(
     ctx.set_timings(**timings)
 
     failed_ids = {str(e.get("file_id") or "") for e in errors}
+    # Only this job's own inputs: the report is about this run, and the
+    # index-wide view lives behind GET .../duplicates. One scan of the CAD
+    # store, and never fatal -- a missing section must not cost a good report.
+    try:
+        duplicate_names = storage.map_duplicate_CAD_filenames(file_ids)
+    except Exception as exc:
+        logger.warning("[JOB] could not collect duplicate names: %s", exc)
+        duplicate_names = {}
     try:
         _write_add_job_report(
             artifacts / "report.txt",
@@ -359,6 +383,7 @@ def run_index_add_job(
             errors,
             heavy_flagged,
             timings,
+            duplicate_names,
         )
         ctx.set_summary(report=True)
     except Exception as exc:  # a missing report must never fail a good job

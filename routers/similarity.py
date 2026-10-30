@@ -689,6 +689,20 @@ class IndexModelConsistencyResponse(BaseModel):
     status: str
 
 
+class IndexDuplicateNamesItem(BaseModel):
+    file_id: str
+    names: list[str]
+
+
+class IndexDuplicateNamesResponse(BaseModel):
+    name: str
+    total: int
+    extra_copies: int
+    offset: int
+    limit: int
+    items: list[IndexDuplicateNamesItem]
+
+
 class IndexPartItem(BaseModel):
     id: str
     filename: Optional[str] = None
@@ -2065,6 +2079,64 @@ def get_index_model_consistency(name: str):
         raise HTTPException(
             status_code=500, detail=f"Failed to check model consistency: {exc}"
         ) from exc
+
+
+# ---------------------------------------------------------------------------
+# GET /similarity/index/{name}/duplicates
+# ---------------------------------------------------------------------------
+
+
+@router.get("/index/{name}/duplicates", response_model=IndexDuplicateNamesResponse)
+def get_index_duplicate_names(
+    name: str,
+    offset: int = Query(0, ge=0, description="Number of items to skip."),
+    limit: int = Query(500, ge=1, le=2000, description="Max items per page (1-2000)."),
+):
+    """List the geometries in an index that were registered under several names.
+
+    A file_id is the SHA-256 of the file's bytes, so uploading the same
+    geometry under different filenames produces **one** index entry, not
+    several. Nothing here is duplicated in the index; what is duplicated is the
+    original filename each copy arrived with, and only the CAD store remembers
+    those. This endpoint is the one place that difference is visible.
+
+    ``total`` counts the geometries carrying more than one original filename
+    and ``extra_copies`` counts the redundant filenames (all of them minus one
+    per geometry); both are for the whole index, not for the page. Only
+    filenames are returned -- never a path on the server.
+
+    Paginated like ``/parts`` even though the list is normally short: it is
+    bounded by the index size, and an index built from a corpus with a large
+    duplicated subset should not be able to turn one request into a response
+    of unbounded size. The counts stay complete regardless of the page.
+
+    A diagnostic, like ``/model-consistency``: it scans the CAD store once per
+    call and is never run on search or at startup.
+    """
+    try:
+        _validate_name_or_raise(name)
+    except HTTPException:
+        raise
+    try:
+        result = core.get_index_duplicate_names(name)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (core.EnvConfigError, core.PathConfigError):
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500, detail=f"Failed to list duplicate names: {exc}"
+        ) from exc
+
+    page = result["items"][offset : offset + limit]
+    return IndexDuplicateNamesResponse(
+        name=result["name"],
+        total=result["total"],
+        extra_copies=result["extra_copies"],
+        offset=offset,
+        limit=limit,
+        items=[IndexDuplicateNamesItem(**it) for it in page],
+    )
 
 
 # ---------------------------------------------------------------------------

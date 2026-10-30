@@ -1916,13 +1916,15 @@ body {
   margin: 0;
 }
 
-.register-jobs {
+.register-jobs,
+.register-duplicates {
   margin-top: 16px;
   border-top: 1px solid var(--border);
   padding-top: 10px;
 }
 
-.register-jobs-title {
+.register-jobs-title,
+.register-duplicates-title {
   font-size: 13px;
   font-weight: 600;
   margin: 0 0 8px;

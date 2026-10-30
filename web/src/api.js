@@ -144,6 +144,18 @@ export function getIndexStats(name) {
   return request(`/similarity/index/${encodeURIComponent(name)}/stats`);
 }
 
+// GET /similarity/index/{name}/duplicates -> the geometries in the index that
+// were registered under more than one original filename. file_ids are content
+// hashes, so these are NOT duplicate index entries (there is one entry each);
+// only the filenames the copies arrived with differ. Returns { name, total,
+// extra_copies, offset, limit, items: [{ file_id, names }] }, where total and
+// extra_copies cover the whole index regardless of the page.
+export function getIndexDuplicates(name, { offset = 0, limit = 500 } = {}) {
+  return request(`/similarity/index/${encodeURIComponent(name)}/duplicates`, {
+    query: { offset, limit },
+  });
+}
+
 // GET /similarity/index/{name}/parts -> paginated file-level listing.
 // Returns { total, offset, limit, items: [{ id, filename, kind, bodies,
 // thumbnail_url, scs_url, registered_at, tags }] }.

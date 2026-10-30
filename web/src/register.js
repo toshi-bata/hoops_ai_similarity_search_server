@@ -57,6 +57,9 @@ export function createRegister({ getIndexName, onJobComplete }) {
   const resubmitButton = el('register-resubmit');
   const reportPre = el('register-report');
   const jobsList = el('register-jobs-list');
+  const duplicatesBox = el('register-duplicates');
+  const duplicatesSummary = el('register-duplicates-summary');
+  const duplicatesList = el('register-duplicates-list');
   const folderInput = el('register-folder-input');
   const filesInput = el('register-files-input');
   const dropZone = el('register-drop');
@@ -386,6 +389,9 @@ export function createRegister({ getIndexName, onJobComplete }) {
     }
 
     await refreshJobs(name);
+    // A run that registered new files may have brought in fresh copies of a
+    // geometry already in the index, so re-ask rather than leave a stale count.
+    await refreshDuplicates(name).catch(() => {});
     if (typeof onJobComplete === 'function') {
       try {
         await onJobComplete();
@@ -467,6 +473,45 @@ export function createRegister({ getIndexName, onJobComplete }) {
 
   // -- Modal open/close -----------------------------------------------------
 
+  // Show which geometries in the index carry more than one original filename.
+  //
+  // These are NOT duplicate index entries. A file_id is the SHA-256 of the
+  // file's bytes, so identical files collapse into one entry however many
+  // times they are registered; what differs is only the filename each copy was
+  // uploaded under, which nothing in the UI would otherwise reveal. It is
+  // shown here because this modal is where registering happens -- the action
+  // that creates the condition -- and it already owns the plain-text pane
+  // idiom used for the job report.
+  //
+  // Never fatal: the index may be empty or brand new, and a failed diagnostic
+  // must not stop anyone from registering parts.
+  async function refreshDuplicates(name) {
+    duplicatesBox.hidden = true;
+    duplicatesSummary.textContent = '';
+    duplicatesList.textContent = '';
+    let report;
+    try {
+      report = await api.getIndexDuplicates(name);
+    } catch {
+      return;
+    }
+    if (!report || !report.total) return;
+    const shapes = `${report.total} shape(s)`;
+    const copies = `${report.extra_copies} redundant copy/copies`;
+    duplicatesSummary.textContent =
+      `${shapes} in "${name}" were registered under two or more original ` +
+      `filenames (${copies}). The index holds one entry for each: identical ` +
+      'files share a file_id, so no entry is duplicated.';
+    const items = report.items || [];
+    const lines = items.map((it) => `${it.file_id}\n    ${(it.names || []).join('\n    ')}`);
+    // The response is paginated; say so rather than silently showing a prefix.
+    if (items.length < report.total) {
+      lines.push(`... ${report.total - items.length} more not shown.`);
+    }
+    duplicatesList.textContent = lines.join('\n');
+    duplicatesBox.hidden = false;
+  }
+
   function open() {
     const name = getIndexName();
     if (!name) return;
@@ -477,6 +522,7 @@ export function createRegister({ getIndexName, onJobComplete }) {
     indexLabel.textContent = `Index: ${name}`;
     modal.hidden = false;
     refreshJobs(name);
+    refreshDuplicates(name).catch(() => {});
   }
 
   function close() {
@@ -496,6 +542,7 @@ export function createRegister({ getIndexName, onJobComplete }) {
     indexLabel.textContent = `Index: ${name}`;
     modal.hidden = false;
     setPhase(`Registering "${filename || fileId}"\u2026`);
+    refreshDuplicates(name).catch(() => {});
     queueAndFollow(name, [fileId], {});
   }
 
