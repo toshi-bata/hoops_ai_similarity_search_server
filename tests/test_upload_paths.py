@@ -6,6 +6,7 @@ where a file is written, and that a value which could not have come from a
 folder picker is refused rather than salvaged.
 """
 import json
+import re
 import sys
 import unittest
 from pathlib import Path
@@ -274,6 +275,85 @@ class TestUploadBatchRecordsThePaths(unittest.TestCase):
             self.assertEqual(res.status_code, 200)
             self.assertEqual(res.json()["count"], 1)
             self.assertEqual(upload_paths.read_all(), {})
+
+
+class TestUploadResponseUsesTheClientName(unittest.TestCase):
+    """The upload endpoints must answer with the name that was sent.
+
+    ``<sha256>_<name>`` is this server's bookkeeping. Handing it to a caller
+    forces the caller to know the rename rule, which is exactly the coupling
+    this check exists to keep broken.
+    """
+
+    STORED_NAME_RE = re.compile(r"^[0-9a-f]{64}_", re.I)
+
+    def _upload(self, endpoint, cad, **kwargs):
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+        from routers.files import router
+        app = FastAPI()
+        app.include_router(router)
+        with patch.object(storage, "get_CAD_shared_dir", lambda: cad):
+            return TestClient(app).post(endpoint, **kwargs)
+
+    def test_single_upload_answers_with_the_sent_name(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            cad = Path(tmp) / "uploads"
+            cad.mkdir()
+            res = self._upload(
+                "/files/upload", cad,
+                files={"file": ("cover.stp", b"alpha", "application/octet-stream")},
+            )
+            self.assertEqual(res.status_code, 200)
+            body = res.json()
+            self.assertEqual(body["filename"], "cover.stp")
+            self.assertIsNone(self.STORED_NAME_RE.match(body["filename"]))
+            # The bytes still landed under the stored name; only the answer changed.
+            self.assertEqual(
+                [p.name for p in cad.iterdir()], [f"{body['file_id']}_cover.stp"]
+            )
+
+    def test_batch_upload_answers_with_the_sent_names(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp, _store(self):
+            cad = Path(tmp) / "uploads"
+            cad.mkdir()
+            res = self._upload(
+                "/files/upload-batch", cad,
+                files=[
+                    ("files", ("cover.stp", b"alpha", "application/octet-stream")),
+                    ("files", ("shaft.stp", b"beta", "application/octet-stream")),
+                ],
+            )
+            self.assertEqual(res.status_code, 200)
+            names = [f["filename"] for f in res.json()["files"]]
+            self.assertEqual(names, ["cover.stp", "shaft.stp"])
+            for name in names:
+                with self.subTest(name=name):
+                    self.assertIsNone(self.STORED_NAME_RE.match(name))
+
+
+class TestClientDoesNotReimplementTheRenameRule(unittest.TestCase):
+    """A tripwire: the client must not learn how files are named on disk.
+
+    ``main.js`` used to carry a ``/^[0-9a-f]{64}_(.+)$/`` that undid the stored
+    name the server handed back. The server now hands back the client's own
+    name, so any 64-wide match in the client means the coupling has returned.
+    """
+
+    def test_no_sha_prefix_pattern_appears_in_the_client(self):
+        offenders = []
+        for path in sorted((REPO_ROOT / "web" / "src").rglob("*.js")):
+            text = path.read_text(encoding="utf-8")
+            for match in re.finditer(r"\{\s*64\s*\}|\b64\b\s*\)", text):
+                window = text[match.start(): match.end() + 24]
+                if "_" in window or "0-9a-f" in window.lower():
+                    line = text.count("\n", 0, match.start()) + 1
+                    offenders.append(f"{path.name}:{line} {window.strip()[:40]}")
+        self.assertEqual(
+            offenders, [], "the stored-name rule must stay on the server"
+        )
 
 
 class TestCoreReExportsAreTheSameObjects(unittest.TestCase):

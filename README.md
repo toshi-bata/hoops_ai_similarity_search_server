@@ -866,6 +866,11 @@ DELETE /files/{file_id}              # delete a stored CAD file
 filename so a client can render the model locally (for example in HOOPS Visualize Web).
 Unknown ids return **404**.
 
+In every response above, `filename` is **the name the client sent**, not the
+name the bytes are stored under. The store names a file `<sha256>_<original
+name>`, but that is this server's bookkeeping: no caller is handed it, and no
+caller should implement the rule to undo it.
+
 `POST /files/upload-batch` also accepts an optional `relative_paths` field: one
 value per file, in the same order as the file parts, holding the folder path the
 client uploaded it from (a browser sends `webkitRelativePath`). The web client

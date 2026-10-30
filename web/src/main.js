@@ -103,16 +103,6 @@ let infoDismissed = false;
 // shown.
 let infoPart = null;
 
-// An uploaded CAD file is stored as "{file_id}_{original name}" (see
-// core.upload_CAD_file_persistent); the server echoes that stored name back.
-// Show just the original name to the user -- the 64-hex file_id is an internal
-// content hash, not something a person can read.
-function displayFilename(name) {
-  if (typeof name !== 'string') return name;
-  const match = /^[0-9a-f]{64}_(.+)$/i.exec(name);
-  return match ? match[1] : name;
-}
-
 // The Shape Map cluster count to fall back on when the server has not said how
 // many this index should open with. Matches the option marked `selected` in
 // index.html and DEFAULT_N_CLUSTERS in shape-map.js. The real default is
@@ -1064,7 +1054,9 @@ async function openFile(file) {
   if (compare) compare.hide();
   const uploaded = await withLoading(() => api.uploadFile(file));
   const scs = await withLoading(() => api.exportScs(uploaded.file_id));
-  const filename = displayFilename(uploaded.filename);
+  // `filename` is the name this client sent; the server no longer echoes the
+  // name it stored the bytes under, so there is nothing to unwrap here.
+  const filename = uploaded.filename;
   state.query = { fileId: uploaded.file_id, filename, indexed: false };
   updateFindEnabled();
   setViewerTitle(filename);
@@ -1283,7 +1275,7 @@ function initAppMenu() {
       .then((uploaded) =>
         compareWithCurrent({
           fileId: uploaded.file_id,
-          filename: displayFilename(uploaded.filename),
+          filename: uploaded.filename,
           indexed: false,
         }),
       )

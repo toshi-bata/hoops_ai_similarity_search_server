@@ -37,7 +37,12 @@ def upload_file(file: UploadFile = File(...)):
         file_id, path, existed = storage.upload_CAD_file_persistent(file)
         return {
             "file_id": file_id,
-            "filename": path.name,
+            # The name the client sent, not the name on disk. Files are stored
+            # as "<sha256>_<original name>", which is this server's bookkeeping
+            # and no business of a caller's: a client that is handed it has to
+            # know the rename rule to show the file the way its operator named
+            # it.
+            "filename": storage.original_filename(path.name),
             "already_existed": existed,
         }
     except core.UploadSizeLimitError as exc:
@@ -54,8 +59,8 @@ def upload_files(
     """Upload several CAD files in one request.
 
     A separate endpoint rather than an extra parameter on ``POST /files/upload``:
-    that endpoint returns a single object and is already consumed by
-    HOOPS_AI-MCPServer, so its response shape must not change.
+    that endpoint returns a single object, and keeping the one-file and
+    many-file shapes apart means neither has to be read conditionally.
 
     One failing file does not abort the request. Every input is reported in
     either ``files`` or ``errors``, so ``len(files) + len(errors)`` always equals
@@ -83,7 +88,8 @@ def upload_files(
             uploaded.append(
                 {
                     "file_id": file_id,
-                    "filename": path.name,
+                    # The name the client sent; see POST /files/upload.
+                    "filename": storage.original_filename(path.name),
                     "already_existed": existed,
                 }
             )
