@@ -452,15 +452,26 @@ def run_index_add_job(
         if fid in set(file_ids)
     }
     redundant = sum(len(p) for p in collapsed.values()) - len(collapsed)
+    report_added = [display_by_fid.get(f, f) for f in file_ids if f not in failed_ids]
     if selected_count is not None:
-        ctx.set_summary(selected=int(selected_count))
+        # The selection figures are published whole, from the same two lists
+        # the report's "# Selection:" line counts, so the summary and the
+        # report can never disagree. The client used to rebuild the gap from
+        # added + failed, which answers a different question -- how embedding
+        # went -- and reported 41 collapsed copies for a run that had none.
+        submitted = len(report_added) + len(errors)
+        ctx.set_summary(
+            selected=int(selected_count),
+            submitted=submitted,
+            collapsed=max(0, int(selected_count) - submitted),
+        )
     if collapsed:
         ctx.set_summary(collapsed_copies=redundant)
     try:
         _write_add_job_report(
             artifacts / "report.txt",
             name,
-            [display_by_fid.get(f, f) for f in file_ids if f not in failed_ids],
+            report_added,
             errors,
             heavy_flagged,
             timings,

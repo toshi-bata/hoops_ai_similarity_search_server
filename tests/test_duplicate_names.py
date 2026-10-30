@@ -200,6 +200,99 @@ class ClientShowsTheGapOnlyInTheResultTests(unittest.TestCase):
         self.assertIn("duplicate_paths: duplicatePaths", api)
 
 
+class SummaryLineUsesTheServersFiguresTests(unittest.TestCase):
+    """The result summary must print the job's figures, not invent its own.
+
+    The client once rebuilt the gap as ``selected - (added + failed)``. That
+    subtracts how embedding went from how many files were picked, so a run of
+    42 files with one embedding failure announced 41 byte-identical copies
+    while its report said ``collapsed=0``.
+    """
+
+    def setUp(self):
+        self.js = (REPO_ROOT / "web" / "src" / "register.js").read_text(encoding="utf-8")
+        start = self.js.index("const { selected, submitted, collapsed } = s;")
+        self.block = self.js[start: self.js.index("retryableIds =", start)]
+
+    def test_the_figures_come_straight_from_the_summary(self):
+        self.assertIn("const { selected, submitted, collapsed } = s;", self.block)
+        for derived in ("s.added", "s.failed", "added", "failed"):
+            with self.subTest(token=derived):
+                self.assertNotIn(derived, self.block)
+
+    def test_no_count_is_rebuilt_from_added_plus_failed(self):
+        # Tripwire: catch the arithmetic itself anywhere in the client, not
+        # just in the block above, so moving it does not hide it.
+        offenders = []
+        for path in sorted((REPO_ROOT / "web" / "src").rglob("*.js")):
+            text = path.read_text(encoding="utf-8")
+            for match in re.finditer(
+                r"(added|failed)\s*(\?\?\s*\d+\s*\)?)?\s*[+-]\s*"
+                r"[^;\n]*\b(added|failed)\b",
+                text,
+            ):
+                line = text.count("\n", 0, match.start()) + 1
+                offenders.append(f"{path.name}:{line} {match.group(0)[:48]}")
+        self.assertEqual(
+            offenders, [],
+            "the gap is selected - submitted; the server publishes it",
+        )
+
+    def test_nothing_is_claimed_when_nothing_collapsed(self):
+        self.assertIn("collapsed > 0", self.block)
+        # One branch writes text, one hides the line. A second "all N went in"
+        # branch would print a standing duplicate notice on every run.
+        self.assertEqual(self.block.count("gapLine.hidden = false;"), 1)
+
+    def test_the_wording_does_not_claim_the_files_were_embedded(self):
+        self.assertIn("submitted", self.block)
+        self.assertNotIn("went to the index", self.block)
+
+    def test_a_job_without_a_selection_shows_nothing(self):
+        self.assertIn("selected != null && submitted != null", self.block)
+        # Resubmit is such a job: its input is the previous job's retryable
+        # ids, which bear no relation to the original selection.
+        resubmit = self.js[
+            self.js.index("async function resubmit("): self.js.index("// -- Jobs list")
+        ]
+        for token in ("selectedCount", "duplicatePaths"):
+            with self.subTest(token=token):
+                self.assertNotIn(token, resubmit)
+
+
+class SummaryAndReportAgreeTests(unittest.TestCase):
+    """The summary figures and the report's "# Selection:" line are one sum."""
+
+    def setUp(self):
+        self.py = (REPO_ROOT / "jobs.py").read_text(encoding="utf-8")
+
+    def test_the_summary_counts_the_lists_the_report_prints(self):
+        body = self.py[self.py.index("def run_index_add_job("):]
+        self.assertIn("submitted = len(report_added) + len(errors)", body)
+        self.assertIn("collapsed=max(0, int(selected_count) - submitted),", body)
+        # The same two lists are what the report is handed.
+        self.assertIn("            report_added,", body)
+
+    def test_the_report_computes_the_gap_the_same_way(self):
+        body = self.py[
+            self.py.index("def _write_add_job_report("):
+            self.py.index("def run_index_add_job(")
+        ]
+        self.assertIn("submitted = len(added) + len(failed)", body)
+        self.assertIn("collapsed={max(0, selected_count - submitted)}", body)
+
+    def test_the_two_agree_on_a_worked_example(self):
+        # 3 picked, 2 submitted (one of which fails to embed): the gap is 1,
+        # and the embedding failure must not touch it.
+        text = _report(
+            {_ID_A: ["a.stp", "copy/a.stp"]},
+            selected=3,
+            added=["a.stp"],
+            failed=[{"file_id": _ID_B, "filename": "b.stp", "error": "boom"}],
+        )
+        self.assertIn("# Selection: selected=3 submitted=2 collapsed=1", text)
+
+
 class HtmlPatternTests(unittest.TestCase):
     """The result pane carries the gap line, and only it."""
 

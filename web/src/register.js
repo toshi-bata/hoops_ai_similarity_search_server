@@ -514,26 +514,38 @@ export function createRegister({ getIndexName, onJobComplete }) {
     if (job.detail) summaryBits.push(job.detail);
     summaryLine.textContent = summaryBits.join('  \u00b7  ');
 
-    // The gap between what was picked and what was registered, stated where
-    // the result is read. It is shown only now, never before a folder is
-    // chosen: the figures are about this run's own selection, and an earlier
+    // The gap between what was picked and what was submitted, stated where the
+    // result is read. It is shown only now, never before a folder is chosen:
+    // the figures are about this run's own selection, and an earlier
     // index-wide version of this notice was twice read as a verdict on the
-    // folder the user was about to register. The report's [DUPLICATES] section
-    // below names the files behind the number.
-    const selected = s.selected;
-    const registered = (s.added ?? 0) + (s.failed ?? 0);
-    if (selected != null && selected > registered) {
+    // folder the user was about to register.
+    //
+    // Every number here is taken verbatim from the job's summary. Do not
+    // derive one from added/failed: that is how embedding went, not how many
+    // files the selection collapsed, and deriving it reported 41 collapsed
+    // copies for a run whose report said collapsed=0.
+    //
+    // The three keys exist only when the client that queued the job sent a
+    // selection with it. That is what tells a selection-driven run apart from
+    // one that is not: Resubmit (which submits the previous job's retryable
+    // file ids), "register the open file" and API callers all queue through
+    // readOptions(), which carries workers and timeLimit and nothing else. A
+    // resubmitted job's input is the retryable count, which has no relation to
+    // the original selection, so comparing the two invents a difference.
+    const { selected, submitted, collapsed } = s;
+    if (selected != null && submitted != null && collapsed > 0) {
       gapLine.textContent =
-        `You picked ${selected} file(s); ${registered} went to the index. The ` +
-        `other ${selected - registered} were byte-identical copies of files ` +
-        'in the same selection, so they share one entry. See [DUPLICATES] below.';
-      gapLine.hidden = false;
-    } else if (selected != null) {
-      gapLine.textContent =
-        `You picked ${selected} file(s) and all ${registered} went to the ` +
-        'index: no two of them held identical geometry.';
+        `You picked ${selected} file(s); ${submitted} of them were submitted ` +
+        `for registration. The other ${collapsed} were byte-identical to ` +
+        'another file in the same selection, so one index entry covers each ' +
+        'group \u2014 see [DUPLICATES] in the report. Whether a submitted ' +
+        'file embedded is a separate question; see the status above.';
       gapLine.hidden = false;
     } else {
+      // Nothing collapsed, or the job did not come from a selection. Say
+      // nothing rather than "no duplicates": a sentence printed after every
+      // run is noise, and a standing statement about duplicates is exactly
+      // what got read as a warning last time.
       gapLine.textContent = '';
       gapLine.hidden = true;
     }
