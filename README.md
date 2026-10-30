@@ -855,6 +855,7 @@ hex digest of the file's content. Re-uploading the same content returns the same
 POST   /files/upload                 # single file  -> { file_id, filename, already_existed }
 POST   /files/upload-batch           # many files in one request
 POST   /files/exists                 # which of the given file_ids are already stored
+POST   /files/paths                  # record the client folder for files already stored
 POST   /files/upload-from-path       # register a server-side CAD file or ZIP by path
 GET    /files/                       # list stored CAD files
 GET    /files/{file_id}/download     # download the stored CAD file (original filename)
@@ -892,6 +893,16 @@ always sends it. What the server does with it is deliberately narrow:
 - Registration reports and the duplicate-names view show these paths. **Files
   uploaded before this existed have none and fall back to their original
   filename**, which is already on disk — no blanks and no `unknown`.
+
+`POST /files/paths` records the same thing for files the server *already*
+holds: `{ "paths": { "<file_id>": "<folder path>" } }`, answering
+`{ "recorded": n }`. Bulk registration uploads only what `POST /files/exists`
+reports as missing, so on a server that already holds the corpus nothing would
+be uploaded and no folder would ever be learnt. The client knows the folder
+either way, so it sends the mapping for every file it skipped. The values go
+through the same check as `relative_paths` — one gate, not two — and a value
+that fails it is dropped and left out of `recorded` rather than failing the
+request.
 
 **Windows (PowerShell, `curl.exe`):**
 

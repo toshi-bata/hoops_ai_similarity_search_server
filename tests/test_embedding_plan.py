@@ -82,7 +82,13 @@ class TestEmbeddingPlanEndpoint(unittest.TestCase):
             else:
                 sys.modules["psutil"] = saved
         self.assertEqual(body["first_pass"]["workers"], 12)
-        self.assertEqual(body["retry_pass"]["workers"], 6)
+        # With no RAM reading the factor divides the core bound instead, so a
+        # 12-core host plans 12 // _HEAVY_FOOTPRINT_FACTOR = 3 heavy workers.
+        self.assertEqual(body["retry_pass"]["workers"], 3)
+        self.assertEqual(
+            body["retry_pass"]["workers"],
+            12 // index_registry._HEAVY_FOOTPRINT_FACTOR,
+        )
 
     def test_an_unset_budget_is_reported_as_the_sdk_default(self):
         """0 means "pass nothing"; the UI must never be shown that number."""
@@ -145,6 +151,28 @@ def _report_header(timings):
             if line.startswith("# Embedding:"):
                 return line
     return ""
+
+
+class TestTheRetryBudgetIsFourGigabytesPerWorker(unittest.TestCase):
+    """The two constants are one decision and must move together.
+
+    ``_HEAVY_FOOTPRINT_FACTOR`` is documented as a multiple of
+    ``_MODEL_FOOTPRINT_MB_DEFAULT``, so what it actually fixes is the product:
+    the per-worker budget the retry pass sizes against. That budget is 4 GB,
+    the figure hoops_ai_qt_sandbox's second pass uses. Halving the base without
+    doubling the factor would quietly make it 2 GB and leave the comment
+    saying otherwise, so the product is asserted rather than either number.
+    """
+
+    def test_the_product_of_the_two_constants_is_4096_mb(self):
+        self.assertEqual(
+            index_registry._MODEL_FOOTPRINT_MB_DEFAULT
+            * index_registry._HEAVY_FOOTPRINT_FACTOR,
+            4096,
+        )
+
+    def test_a_heavy_worker_is_budgeted_more_than_a_light_one(self):
+        self.assertGreater(index_registry._HEAVY_FOOTPRINT_FACTOR, 1)
 
 
 class TestSizingIsNotDuplicatedInTheClient(unittest.TestCase):

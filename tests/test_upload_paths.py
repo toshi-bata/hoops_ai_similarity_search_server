@@ -277,6 +277,76 @@ class TestUploadBatchRecordsThePaths(unittest.TestCase):
             self.assertEqual(upload_paths.read_all(), {})
 
 
+class TestPathsForFilesAlreadyHeld(unittest.TestCase):
+    """The gap this closes: a corpus already on the server recorded nothing.
+
+    ``uploadMissing()`` uploads only what ``/files/exists`` reports as missing,
+    and the folder path rides along with an upload. On a server that already
+    holds every file, that is no files, so the folders were never learnt.
+    """
+
+    def _client(self):
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+        from routers.files import router
+        app = FastAPI()
+        app.include_router(router)
+        return TestClient(app)
+
+    def test_paths_are_recorded_without_uploading_anything(self):
+        with _store(self):
+            res = self._client().post(
+                "/files/paths",
+                json={"paths": {SHA_A: "asm1/cover.stp", SHA_B: "asm2/shaft.stp"}},
+            )
+            self.assertEqual(res.status_code, 200)
+            self.assertEqual(res.json()["recorded"], 2)
+            self.assertEqual(
+                upload_paths.read_all(),
+                {SHA_A: ["asm1/cover.stp"], SHA_B: ["asm2/shaft.stp"]},
+            )
+
+    def test_the_route_shares_the_one_sanitizer(self):
+        """A second validation path is how one of them ends up the weaker."""
+        with _store(self):
+            res = self._client().post(
+                "/files/paths",
+                json={"paths": {SHA_A: "../../etc/passwd", SHA_B: "ok/part.stp"}},
+            )
+            self.assertEqual(res.status_code, 200)
+            self.assertEqual(res.json()["recorded"], 1)
+            self.assertEqual(upload_paths.read_all(), {SHA_B: ["ok/part.stp"]})
+
+    def test_traversal_values_are_refused_here_too(self):
+        with _store(self):
+            for value in TestPathTraversalIsRefused.REFUSED:
+                with self.subTest(value=value[:40]):
+                    res = self._client().post(
+                        "/files/paths", json={"paths": {SHA_A: value}}
+                    )
+                    self.assertEqual(res.status_code, 200)
+                    self.assertEqual(res.json()["recorded"], 0)
+            self.assertEqual(upload_paths.read_all(), {})
+
+    def test_the_client_sends_paths_for_the_files_it_skipped(self):
+        """A tripwire: the skip in uploadMissing() must stay paired with this.
+
+        Dropping the call would restore the original hole silently -- nothing
+        errors, reports just quietly go back to bare filenames.
+        """
+        api = (REPO_ROOT / "web" / "src" / "api.js").read_text(encoding="utf-8")
+        self.assertIn("request('/files/paths'", api)
+        register = (REPO_ROOT / "web" / "src" / "register.js").read_text(
+            encoding="utf-8"
+        )
+        start = register.index("async function uploadMissing(")
+        body = register[start:register.index("\n  }", start)]
+        self.assertIn("recordFilePaths", body)
+        # Sent for the files that were NOT uploaded; the uploaded ones already
+        # carried their path with the bytes.
+        self.assertIn("knownIds.has(", body)
+
+
 class TestUploadResponseUsesTheClientName(unittest.TestCase):
     """The upload endpoints must answer with the name that was sent.
 

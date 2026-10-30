@@ -476,6 +476,31 @@ export async function existsFiles(fileIds, onProgress) {
   return out;
 }
 
+// POST /files/paths -> { recorded }.
+// Tells the server which folder each file_id came from. Upload-batch already
+// carries this for the files it sends, but a bulk registration uploads only
+// what /files/exists reports as missing -- on a server that already holds the
+// corpus, that is nothing. The client knows the folder either way, so it sends
+// the mapping for every selected file and the reports can name parts the way
+// the operator named them. Display data: the server never builds a path from
+// it (see upload_paths.sanitize_relative_path).
+//
+// Chunked and sequential for the same reason existsFiles is, and sharing its
+// chunk size, because both are sized by the same server-side id limit.
+export async function recordFilePaths(pathsById) {
+  const entries = Object.entries(pathsById || {}).filter(([, p]) => p);
+  let recorded = 0;
+  for (let i = 0; i < entries.length; i += EXISTS_CHUNK) {
+    const chunk = entries.slice(i, i + EXISTS_CHUNK);
+    const res = await request('/files/paths', {
+      method: 'POST',
+      body: { paths: Object.fromEntries(chunk) },
+    });
+    recorded += (res && res.recorded) || 0;
+  }
+  return recorded;
+}
+
 // POST /files/upload-batch -> { files: [{ file_id, filename, already_existed }],
 // errors: [{ filename, detail }], count }. Uploads several CAD files in one
 // request; one failing file does not abort the others (every input is reported

@@ -22,6 +22,21 @@ class FileExistsResponse(BaseModel):
     invalid: list[str] = []
 
 
+class FilePathsRequest(BaseModel):
+    paths: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Client folder path for each file_id, as the browser reported it "
+            "(webkitRelativePath). Display data only: it never decides where "
+            "anything is written."
+        ),
+    )
+
+
+class FilePathsResponse(BaseModel):
+    recorded: int = 0
+
+
 @router.post("/upload")
 def upload_file(file: UploadFile = File(...)):
     """Upload a CAD file to the server.
@@ -118,6 +133,39 @@ def check_files_exist(payload: FileExistsRequest = Body(...)):
             detail=f"Too many file_ids: {len(payload.file_ids)} (limit {limit}).",
         )
     return core.check_persistent_CAD_files(payload.file_ids)
+
+
+@router.post("/paths", response_model=FilePathsResponse)
+def record_file_paths(payload: FilePathsRequest = Body(...)):
+    """Record where the client says these files live, for display only.
+
+    ``POST /files/upload-batch`` carries a folder path for every file it
+    uploads, but a bulk registration skips uploading anything the server
+    already holds (see ``POST /files/exists``). On a server whose corpus is
+    already stored that is every file, so without this endpoint a folder
+    registration would record no paths at all and every report would fall back
+    to bare filenames. The client knows the folder whether or not it had to
+    send the bytes, so it sends the mapping either way.
+
+    A whole mapping per request, not one file per request: this runs over a
+    folder of ten thousand files, and the client chunks it the way it chunks
+    ``/files/exists``.
+
+    Values go through the same :func:`upload_paths.sanitize_relative_path` as
+    the upload route -- one gate, not two, so neither can be the weaker. A
+    value that fails it is dropped silently and counted out of ``recorded``;
+    there is nothing a caller could usefully do about a path its own browser
+    produced, and failing the request would abort a registration over display
+    data.
+    """
+    limit = core.exists_max_ids()
+    if len(payload.paths) > limit:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Too many paths: {len(payload.paths)} (limit {limit}).",
+        )
+    recorded = core.record_upload_paths(list(payload.paths.items()))
+    return {"recorded": recorded}
 
 
 @router.post("/upload-from-path")

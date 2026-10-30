@@ -426,7 +426,8 @@ def _embed_error_detail(
 # --- Embedding tuning: worker count and per-file time budget -----------------
 #
 # Ported from hoops_ai_native_bridge's ComputeAutoWorkers. Every worker is a
-# spawned interpreter holding its own copy of the ~2 GB checkpoint, so peak RSS
+# spawned interpreter holding its own copy of the checkpoint (see
+# _MODEL_FOOTPRINT_MB_DEFAULT for what that measures out at), so peak RSS
 # grows roughly linearly with the worker count while throughput reaches a
 # plateau and then declines once RAM-bound. Measured on the bridge: light
 # single-body parts plateau near the physical core count (12 was the peak on a
@@ -456,7 +457,24 @@ def _embed_error_detail(
 # the ~55-60 s startup measured here was for a 20-worker pool and scales with
 # the worker count. Set it if your corpus is uniformly light.
 _MAX_WORKERS_DEFAULT = 12
-_MODEL_FOOTPRINT_MB_DEFAULT = 2048
+
+# What one worker of a normal pass is assumed to occupy, in MB. Measured, not
+# estimated: a 14-physical-core / 32 GB host finished a 10,250-file
+# registration on 12 workers at a peak of 25 GB (~79%). Twelve workers at the
+# previous 2048 MB would have put 24 GB of baseline alone under that peak,
+# which does not fit, so one worker costs about 1 GB and not two. The old 2048
+# was a conservative guess, and its cost was concrete: it handed ram_cap = 6 to
+# a machine that demonstrably completes on 12.
+#
+# This moves an estimate towards a measurement; it does not weaken the valve.
+# The bound is still proportional to free RAM and still leaves
+# _HOST_RAM_RESERVE_BYTES (2 GiB) to the host.
+#
+# Paired with _HEAVY_FOOTPRINT_FACTOR below: that factor is expressed as a
+# multiple of THIS number, so the retry pass's per-worker budget is the product
+# of the two. Changing either one alone changes that budget. See the factor's
+# own comment for the arithmetic it has to keep true.
+_MODEL_FOOTPRINT_MB_DEFAULT = 1024
 _MIN_FILES_PARALLEL_DEFAULT = 1
 _HOST_RAM_RESERVE_BYTES = 2 * 1024 * 1024 * 1024
 
@@ -491,17 +509,23 @@ def _physical_core_cap() -> tuple:
 # by definition are the heavy ones: large assemblies with far more bodies to
 # tessellate and hold at once than the single-body parts that make up the bulk
 # of a corpus. A worker on one of those occupies measurably more than the
-# ~2 GB checkpoint HOOPS_AI_MODEL_FOOTPRINT_MB accounts for, so sizing the
-# retry pass with the first pass's footprint oversubscribes RAM exactly where
-# it hurts most.
+# checkpoint HOOPS_AI_MODEL_FOOTPRINT_MB accounts for, so sizing the retry pass
+# with the first pass's footprint oversubscribes RAM exactly where it hurts
+# most.
 #
-# The factor is 2 because it puts the per-worker budget at 2 x 2048 MB = 4 GB,
-# which is what hoops_ai_qt_sandbox's retry pass already allows for: it sizes
-# pass 2 as round(free RAM / 4 GB) (SimilarityIndexPanel.cpp, ~line 1787), and
-# measured 2..4 workers on real hosts. Same budget per worker, reached through
-# this server's existing knob rather than a second hard-coded gigabyte figure,
-# so HOOPS_AI_MODEL_FOOTPRINT_MB keeps moving both passes together.
-_HEAVY_FOOTPRINT_FACTOR = 2
+# The number that matters is the per-worker budget, which is the PRODUCT of
+# this factor and _MODEL_FOOTPRINT_MB_DEFAULT above: 4 x 1024 MB = 4 GB. That
+# 4 GB is what hoops_ai_qt_sandbox's retry pass already allows for -- it sizes
+# pass 2 as round(free RAM / 4 GiB) (SimilarityIndexPanel.cpp, lines 1783-1786)
+# and measured 2..4 workers on real hosts. Same budget per worker, reached
+# through this server's existing knob rather than a second hard-coded gigabyte
+# figure, so HOOPS_AI_MODEL_FOOTPRINT_MB keeps moving both passes together.
+#
+# Hence the two constants move together. When the base was halved from 2048 to
+# 1024 this factor was doubled from 2 to 4 in the same change, because halving
+# the base alone would have quietly dropped the retry budget to 2 GB and
+# falsified the sentence above. tests/test_embedding_plan.py pins the product.
+_HEAVY_FOOTPRINT_FACTOR = 4
 
 # The per-file budget for the retry pass, in seconds. Measured, not chosen:
 # with it a retry over 276 timed-out files recovered 267 of them (9 still

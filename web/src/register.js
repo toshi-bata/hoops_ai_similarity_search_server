@@ -258,6 +258,7 @@ export function createRegister({ getIndexName, onJobComplete }) {
     const canHash = hashes.every((h) => h !== null);
 
     let known = [];
+    let knownIds = new Set();
     let toUpload = files;
     let invalidCount = 0;
     if (canHash) {
@@ -270,6 +271,7 @@ export function createRegister({ getIndexName, onJobComplete }) {
         setOverall(STAGE_HASH_END, `Checking ${done} / ${total}\u2026`);
       });
       const knownSet = new Set(result.known || []);
+      knownIds = knownSet;
       known = (result.known || []).slice();
       // `invalid` ids are a distinct signal from `unknown` (server-side hash
       // format check) -- surface the count rather than silently re-uploading
@@ -294,6 +296,25 @@ export function createRegister({ getIndexName, onJobComplete }) {
         STAGE_HASH_END + (uploaded / toUpload.length) * uploadSpan,
         `Uploading ${uploaded} / ${toUpload.length}\u2026`,
       );
+    }
+
+    // The folder each already-held file came from. Uploading is what normally
+    // carries this (api.uploadBatch sends it alongside the bytes), so on a
+    // server that already holds the corpus nothing would ever be recorded --
+    // the files skipped just above are exactly the ones a report cannot name.
+    // Failing to record is not worth failing a registration over: this is
+    // display data, so the error is reported and the run continues.
+    if (canHash) {
+      const pathsById = {};
+      files.forEach((f, i) => {
+        const relative = f.webkitRelativePath || '';
+        if (relative && knownIds.has(hashes[i])) pathsById[hashes[i]] = relative;
+      });
+      try {
+        await api.recordFilePaths(pathsById);
+      } catch (err) {
+        console.warn('Could not record upload paths', err);
+      }
     }
 
     return { fileIds: [...known, ...uploadedIds], uploadErrors, invalidCount };
