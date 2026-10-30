@@ -1137,7 +1137,17 @@ GET    /similarity/index/{name}/jobs                # list jobs for an index
 GET    /similarity/index/{name}/jobs/{job_id}       # poll a job
 GET    /similarity/index/{name}/jobs/{job_id}/report# per-file registration report
 DELETE /similarity/index/{name}/jobs/{job_id}       # cancel a job
+GET    /similarity/embedding-plan?file_count=N      # the values a job would use
 ```
+
+`GET /similarity/embedding-plan` resolves, without creating anything, the
+`workers` and `time_limit` a job over `file_count` files would run with: a
+`first_pass` block, a `retry_pass` block (fewer workers, a longer budget), and
+for each a `basis` naming the figures the choice came from (`cap`, `cores`,
+`cores_measured`, `ram`, `files`). Its `time_limit` is always the effective
+budget — never the `0` that means "pass nothing and leave the SDK's own default
+in place". The web client uses it to pre-fill its two fields; the sizing rule
+itself stays on the server, so there is only ever one copy of it.
 
 `POST .../jobs/add` takes a JSON body. Supply **one** input source plus optional
 tuning:
@@ -1196,6 +1206,15 @@ deterministic CAD errors that will never succeed, however long the budget.
 Cancellation only takes effect **before** a job starts embedding, so split a
 large corpus into several jobs to keep cancellation and commit granularity under
 your control.
+
+In the browser, **Register…** runs both passes for you. Selecting files fills
+**Workers** and **Time limit** with the numbers that selection will really be
+registered with (from `GET /similarity/embedding-plan`); hovering either field
+shows what the worker count was derived from. Edit a value to override it, or
+clear a field to send nothing and let the server size that half of the run —
+which is what every non-browser caller does. When the job finishes with
+retryable failures, a **Resubmit** button appears and the two fields change to
+the retry-pass values, so the second pass is one click rather than a lookup.
 
 ---
 

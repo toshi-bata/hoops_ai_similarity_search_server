@@ -486,6 +486,89 @@ def _physical_core_cap() -> tuple:
     return max(1, logical // 2), False
 
 
+# The retry pass registers only the files the first pass could not finish, which
+# by definition are the heavy ones: large assemblies with far more bodies to
+# tessellate and hold at once than the single-body parts that make up the bulk
+# of a corpus. A worker on one of those occupies measurably more than the
+# ~2 GB checkpoint HOOPS_AI_MODEL_FOOTPRINT_MB accounts for, so sizing the
+# retry pass with the first pass's footprint oversubscribes RAM exactly where
+# it hurts most.
+#
+# The factor is 2 because it puts the per-worker budget at 2 x 2048 MB = 4 GB,
+# which is what hoops_ai_qt_sandbox's retry pass already allows for: it sizes
+# pass 2 as round(free RAM / 4 GB) (SimilarityIndexPanel.cpp, ~line 1787), and
+# measured 2..4 workers on real hosts. Same budget per worker, reached through
+# this server's existing knob rather than a second hard-coded gigabyte figure,
+# so HOOPS_AI_MODEL_FOOTPRINT_MB keeps moving both passes together.
+_HEAVY_FOOTPRINT_FACTOR = 2
+
+# The per-file budget for the retry pass, in seconds. Measured, not chosen:
+# with it a retry over 276 timed-out files recovered 267 of them (9 still
+# failed). It is also the value hoops_ai_qt_sandbox and the published write-up
+# use for their second pass.
+_RETRY_TIME_LIMIT_SECONDS = 1200
+
+# What the SDK applies per file when no budget is passed to it. Mirrored here
+# only so the server can SAY what will happen: HOOPS_AI_EMBED_TIME_LIMIT=0 means
+# "do not pass one", and reporting that as a limit of "0 s" reads like "no
+# time at all" or "unlimited" depending on the reader. Neither is true.
+_SDK_DEFAULT_TIME_LIMIT_SECONDS = 120
+
+
+def _size_workers(file_count: int, footprint_factor: int = 1) -> dict[str, Any]:
+    """Size a worker pool for *file_count* files, and say what decided it.
+
+    The single sizing rule, so that the number a run uses and the number the UI
+    shows can never disagree. Returns the chosen count under ``workers`` plus
+    the four figures it is the minimum of (``cap``, ``cores``, ``ram``,
+    ``files``), which are what the ``[EMBED] auto workers=...`` log line
+    reports; ``ram`` is ``None`` when there is no memory reading to report.
+
+    *footprint_factor* is how much more memory one worker of this pass needs
+    than HOOPS_AI_MODEL_FOOTPRINT_MB describes; 1 is the normal pass. It
+    divides the memory bound directly. With no RAM reading available it divides
+    the core bound instead, because that is then the only bound left on which
+    "each worker now costs several times as much" can be stated at all --
+    saying nothing would size a heavy retry exactly like a light first pass,
+    which is the mistake the factor exists to prevent.
+    """
+    max_workers = _env_int("HOOPS_AI_MAX_WORKERS", _MAX_WORKERS_DEFAULT, minimum=1)
+    model_mb = _env_int(
+        "HOOPS_AI_MODEL_FOOTPRINT_MB", _MODEL_FOOTPRINT_MB_DEFAULT, minimum=1
+    )
+    factor = max(1, int(footprint_factor))
+    core_cap, cores_measured = _physical_core_cap()
+
+    ram_cap: Optional[int] = None
+    available_gb = None
+    try:
+        import psutil
+
+        available = int(psutil.virtual_memory().available)
+        available_gb = available / (1024 ** 3)
+        usable = max(0, available - _HOST_RAM_RESERVE_BYTES)
+        ram_cap = int(usable // (model_mb * factor * 1024 * 1024))
+    except Exception:
+        # No psutil (or an unsupported platform): fall back to the core cap
+        # alone rather than guessing at memory.
+        logger.debug("[EMBED] RAM probe unavailable; sizing workers by cores only")
+        core_cap = max(1, core_cap // factor)
+
+    bounds = [max_workers, core_cap, max(1, file_count)]
+    if ram_cap is not None:
+        bounds.append(ram_cap)
+    return {
+        "workers": max(1, min(bounds)),
+        "cap": max_workers,
+        "cores": core_cap,
+        "cores_measured": cores_measured,
+        "ram": ram_cap,
+        "available_gb": available_gb,
+        "model_mb": model_mb * factor,
+        "files": file_count,
+    }
+
+
 def compute_auto_workers(file_count: int) -> int:
     """Choose a worker count for *file_count* files.
 
@@ -520,25 +603,10 @@ def compute_auto_workers(file_count: int) -> int:
     if file_count < min_parallel:
         return 1
 
-    core_cap, cores_measured = _physical_core_cap()
-
-    ram_cap = max_workers
-    ram_bound = False
-    available_gb = None
-    try:
-        import psutil
-
-        available = int(psutil.virtual_memory().available)
-        available_gb = available / (1024 ** 3)
-        usable = max(0, available - _HOST_RAM_RESERVE_BYTES)
-        ram_cap = usable // (model_mb * 1024 * 1024)
-        ram_bound = True
-    except Exception:
-        # No psutil (or an unsupported platform): fall back to the core cap
-        # alone rather than guessing at memory.
-        logger.debug("[EMBED] RAM probe unavailable; sizing workers by cores only")
-
-    chosen = max(1, min(max_workers, core_cap, ram_cap, max(1, file_count)))
+    sizing = _size_workers(file_count)
+    chosen = sizing["workers"]
+    core_cap = sizing["cores"]
+    ram_cap = sizing["ram"]
 
     # Free RAM is sampled at job start and fluctuates -- a preceding job's
     # workers may not have been reclaimed yet -- so a surprisingly low count
@@ -549,19 +617,75 @@ def compute_auto_workers(file_count: int) -> int:
     logger.info(
         "[EMBED] auto workers=%d (cap=%d, cores=%d(%s), ram=%s, files=%d)",
         chosen, max_workers, core_cap,
-        "physical" if cores_measured else "approx",
-        ram_cap if ram_bound else "n/a", file_count,
+        "physical" if sizing["cores_measured"] else "approx",
+        ram_cap if ram_cap is not None else "n/a", file_count,
     )
-    if ram_bound and ram_cap <= 1 and min(max_workers, core_cap, file_count) > 1:
+    if ram_cap is not None and ram_cap <= 1 and min(max_workers, core_cap, file_count) > 1:
         logger.warning(
             "[EMBED] falling back to sequential embedding: only %.1f GB free, "
             "and each worker needs %d MB on top of a %.1f GB host reserve. "
             "Cores would allow %d. Wait for the previous job's workers to be "
             "reclaimed, or pass an explicit 'workers' to override.",
-            available_gb, model_mb, _HOST_RAM_RESERVE_BYTES / (1024 ** 3),
+            sizing["available_gb"], model_mb,
+            _HOST_RAM_RESERVE_BYTES / (1024 ** 3),
             min(max_workers, core_cap),
         )
     return chosen
+
+
+def effective_embed_time_limit() -> int:
+    """The per-file budget a run will really apply, in seconds.
+
+    :func:`embed_time_limit` returns the raw setting, where ``0`` means "pass
+    nothing to the SDK and let its own 120 s stand". That zero is correct as an
+    argument and wrong as an answer: shown to a user or written into a report it
+    reads as no budget at all. Everything that *reports* a budget uses this.
+    """
+    return embed_time_limit() or _SDK_DEFAULT_TIME_LIMIT_SECONDS
+
+
+def plan_embedding_run(file_count: int) -> dict[str, Any]:
+    """Resolve the worker count and per-file budget for both registration passes.
+
+    The documented loop is two passes: a first one sized for throughput, then a
+    retry of the files that ran out of time, sized for the heavy assemblies
+    those always turn out to be. This resolves both with the same rules a job
+    actually applies, so a client can show the real numbers instead of the word
+    "auto" -- and so the rules stay in one place. A client that computes them
+    itself goes stale the next time the sizing changes, which in this file has
+    happened repeatedly.
+
+    Returns ``{"file_count", "first_pass": {...}, "retry_pass": {...}}`` where
+    each pass carries ``workers``, ``time_limit`` and the ``basis`` the worker
+    count is the minimum of (``cap`` / ``cores`` / ``ram`` / ``files``, plus
+    whether the core count was measured or approximated). Budgets are always
+    effective values, never the raw ``0``.
+    """
+    count = max(0, int(file_count))
+    first = _size_workers(count)
+    retry = _size_workers(count, footprint_factor=_HEAVY_FOOTPRINT_FACTOR)
+
+    def _pass(sizing: dict[str, Any], time_limit: int) -> dict[str, Any]:
+        return {
+            "workers": sizing["workers"],
+            "time_limit": time_limit,
+            "basis": {
+                "cap": sizing["cap"],
+                "cores": sizing["cores"],
+                "cores_measured": bool(sizing["cores_measured"]),
+                "ram": sizing["ram"],
+                "files": sizing["files"],
+                "model_mb": sizing["model_mb"],
+            },
+        }
+
+    return {
+        "file_count": count,
+        "first_pass": _pass(first, effective_embed_time_limit()),
+        # Longer per file and fewer at a time: the opposite trade from the first
+        # pass, which is the whole point of resubmitting.
+        "retry_pass": _pass(retry, _RETRY_TIME_LIMIT_SECONDS),
+    }
 
 
 def embed_time_limit() -> int:

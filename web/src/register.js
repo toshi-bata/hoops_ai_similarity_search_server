@@ -126,6 +126,9 @@ export function createRegister({ getIndexName, onJobComplete }) {
 
   function setSelection(files) {
     selectedFiles = files;
+    // Re-resolve what a run over this selection would use: the worker count is
+    // bounded by the file count, so it moves with the selection.
+    showFirstPassPlan(files.length).catch(() => {});
     if (files.length === 0) {
       selectionInfo.textContent = '';
       submitButton.disabled = true;
@@ -144,6 +147,91 @@ export function createRegister({ getIndexName, onJobComplete }) {
   function onFolderChosen(event) {
     resetRunUi();
     setSelection(filterCad(event.target.files));
+  }
+
+  // -- Resolved run options -------------------------------------------------
+  //
+  // The Workers / Time limit fields are pre-filled with the numbers the run
+  // will really use, so the screen says what is going to happen instead of
+  // "auto". The values come from GET /similarity/embedding-plan and are NEVER
+  // computed here: the sizing rule reads this host's physical cores and free
+  // RAM, and it has been re-tuned repeatedly (the cap, and logical-vs-physical
+  // cores, both moved). A copy in the client would be wrong after the next
+  // change, and wrong in a way nobody would notice. The client's job is to
+  // show the server's answer and let the user override it.
+  //
+  // Clearing a field is still meaningful: readOptions() omits an empty field,
+  // the job API treats an omitted field as "size it yourself", and that is the
+  // path every non-browser caller (curl, MCP) uses. Pre-filling must not become
+  // a requirement to send a value.
+
+  // Rising token: a slow answer for a selection the user has already replaced
+  // must not land in the fields.
+  let planToken = 0;
+
+  function clearPlanFields() {
+    el('register-workers').value = '';
+    el('register-timelimit').value = '';
+    el('register-workers').title = '';
+    el('register-timelimit').title = '';
+  }
+
+  // Describe where a worker count came from: the same four figures the server
+  // logs as "[EMBED] auto workers=N (cap=.., cores=.., ram=.., files=..)". Put
+  // on the control itself (a title attribute), so it appears only when the
+  // pointer rests on the field -- not while sweeping across a list.
+  function describeBasis(label, plan) {
+    const b = plan.basis || {};
+    const bits = [
+      `cap ${b.cap}`,
+      `cores ${b.cores}${b.cores_measured ? '' : ' (approx)'}`,
+      b.ram == null ? 'ram n/a' : `ram ${b.ram}`,
+      `files ${b.files}`,
+    ];
+    return `${label}: the smallest of ${bits.join(', ')}. Clear the field to let the server size the run.`;
+  }
+
+  function applyPlan(pass, label) {
+    el('register-workers').value = String(pass.workers);
+    el('register-timelimit').value = String(pass.time_limit);
+    el('register-workers').title = describeBasis(label, pass);
+    el('register-timelimit').title =
+      `${label}: ${pass.time_limit}s per file. Files that exceed it are ` +
+      'reported as retryable; resubmit those with a longer budget.';
+  }
+
+  // Fill the fields for a first-pass run over `fileCount` files. Never fatal:
+  // if the plan cannot be fetched the fields stay empty, which is exactly the
+  // old behaviour (the server sizes the run).
+  async function showFirstPassPlan(fileCount) {
+    const token = ++planToken;
+    if (fileCount <= 0) {
+      clearPlanFields();
+      return;
+    }
+    let plan;
+    try {
+      plan = await api.getEmbeddingPlan(fileCount);
+    } catch {
+      return;
+    }
+    if (token !== planToken) return;
+    applyPlan(plan.first_pass, 'First pass');
+  }
+
+  // Swap in the retry pass: fewer workers, a longer budget. index.html has
+  // described this trade for as long as the fields have existed without ever
+  // showing the numbers; this is where they become usable.
+  async function showRetryPassPlan(fileCount) {
+    const token = ++planToken;
+    let plan;
+    try {
+      plan = await api.getEmbeddingPlan(fileCount);
+    } catch {
+      return;
+    }
+    if (token !== planToken) return;
+    applyPlan(plan.retry_pass, 'Retry pass');
   }
 
   // -- The run: hash -> exists -> upload -> queue -> poll -------------------
@@ -377,6 +465,14 @@ export function createRegister({ getIndexName, onJobComplete }) {
     // runBulk() passes one; the Resubmit and "register the open file" paths
     // own no selection, so they are left exactly as they were.
     if (typeof onSettled === 'function') onSettled(job);
+
+    // After the selection has been settled, because clearing it re-resolves the
+    // first-pass plan: offering the retry pass is only half of it, so fill the
+    // fields with the values that pass actually uses. Pressing Resubmit then
+    // runs the documented second pass instead of repeating the first one.
+    if (retryableIds.length) {
+      showRetryPassPlan(retryableIds.length).catch(() => {});
+    }
 
     // The report exists only once the job wrote one (report_url set). Fetch it
     // as text; a 404 just means there is nothing to show.

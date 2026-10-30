@@ -1127,7 +1127,17 @@ GET    /similarity/index/{name}/jobs                # インデックスのジ�
 GET    /similarity/index/{name}/jobs/{job_id}       # ジョブをポーリングします
 GET    /similarity/index/{name}/jobs/{job_id}/report# ファイルごとの登録レポート
 DELETE /similarity/index/{name}/jobs/{job_id}       # ジョブをキャンセルします
+GET    /similarity/embedding-plan?file_count=N      # ジョブが実際に使う値
 ```
+
+`GET /similarity/embedding-plan` は、何も作成せずに、`file_count` 件のファイルを
+扱うジョブが使う `workers` と `time_limit` を返します。1パス目の `first_pass`、
+リトライパスの `retry_pass`（ワーカーは少なく、制限時間は長い）、そしてそれぞれに
+値の根拠を示す `basis`（`cap`、`cores`、`cores_measured`、`ram`、`files`）が
+含まれます。`time_limit` は常に実効値で、「何も渡さず SDK 既定のままにする」を
+意味する `0` が返ることはありません。Web クライアントはこれを使って2つの入力欄を
+事前入力します。サイジングの規則そのものはサーバー側にとどまるため、規則の写しが
+増えることはありません。
 
 `POST .../jobs/add` は JSON ボディを受け取ります。入力ソースを **1つ** に加えて、
 任意のチューニングを指定します。
@@ -1186,6 +1196,15 @@ curl -X POST "http://127.0.0.1:8000/similarity/index/my-parts/jobs/add" \
 予算をどれだけ与えても決して成功しません。キャンセルはジョブが埋め込みを開始する
 **前** にのみ有効になるため、大規模なコーパスは複数のジョブに分割して、キャンセルと
 コミットの粒度を制御下に置いてください。
+
+ブラウザでは **Register…** が両方のパスを実行します。ファイルを選択すると
+**Workers** と **Time limit** に、その選択が実際に登録される際の値が入ります
+（`GET /similarity/embedding-plan` から取得）。どちらかの欄にポインタを重ねると、
+ワーカー数の根拠が表示されます。値を書き換えれば上書きでき、欄を空にすれば何も
+送らずそのパラメータのサイジングをサーバーに任せられます（ブラウザ以外の呼び出し元は
+すべてこの経路です）。ジョブが再試行可能な失敗を残して終了すると **Resubmit**
+ボタンが現れ、2つの欄はリトライパスの値に差し替わります。2パス目は値を調べ直す
+ことなくクリック1回で投入できます。
 
 ---
 

@@ -144,6 +144,19 @@ export function getIndexStats(name) {
   return request(`/similarity/index/${encodeURIComponent(name)}/stats`);
 }
 
+// GET /similarity/embedding-plan -> the worker count and per-file budget a
+// registration job would really use for `fileCount` files, for both the first
+// pass and the retry pass. The sizing rule lives on the server and is NOT
+// mirrored here: it is re-measured per host (cores, free RAM) and has changed
+// several times. Returns { file_count, first_pass, retry_pass } where each pass
+// is { workers, time_limit, basis: { cap, cores, cores_measured, ram, files,
+// model_mb } }. time_limit is always an effective value, never 0.
+export function getEmbeddingPlan(fileCount) {
+  return request('/similarity/embedding-plan', {
+    query: { file_count: Math.max(0, Number(fileCount) || 0) },
+  });
+}
+
 // GET /similarity/index/{name}/duplicates -> the geometries in the index that
 // were registered under more than one original filename. file_ids are content
 // hashes, so these are NOT duplicate index entries (there is one entry each);

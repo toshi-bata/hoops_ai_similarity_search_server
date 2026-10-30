@@ -41,7 +41,12 @@ import config
 import index_registry
 import storage
 from config import _env_int
-from index_registry import _EMBED_ERROR_DEFAULT, compute_auto_workers, embed_time_limit
+from index_registry import (
+    _EMBED_ERROR_DEFAULT,
+    _SDK_DEFAULT_TIME_LIMIT_SECONDS,
+    compute_auto_workers,
+    embed_time_limit,
+)
 from storage import map_persistent_CAD_files
 from shape_map import prewarm_shape_map
 
@@ -194,9 +199,23 @@ def _write_add_job_report(
         f"{datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}"
     )
     lines.append(f"# Index: {name}")
+    # A recorded limit of 0 means "nothing was passed to the SDK", which leaves
+    # its own per-file budget in place. Printed raw it reads as no budget at
+    # all, so the report says the number that was really in force and where it
+    # came from.
+    raw_limit = timings.get("time_limit", None)
+    if raw_limit == 0:
+        limit_text = (
+            f"{_SDK_DEFAULT_TIME_LIMIT_SECONDS}s (SDK default; "
+            "HOOPS_AI_EMBED_TIME_LIMIT unset)"
+        )
+    elif raw_limit is None:
+        limit_text = "-"
+    else:
+        limit_text = f"{raw_limit}s"
     lines.append(
         f"# Embedding: num_workers={timings.get('num_workers', '-')} "
-        f"time_limit={timings.get('time_limit', '-')}s"
+        f"time_limit={limit_text}"
     )
     lines.append(f"# Elapsed: {_fmt(timings.get('embed_seconds'))}")
     lines.append(

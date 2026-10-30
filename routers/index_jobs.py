@@ -320,6 +320,47 @@ def create_index_add_job(
     )
 
 
+class EmbeddingPassPlan(BaseModel):
+    workers: int
+    time_limit: int
+    basis: dict
+
+
+class EmbeddingPlanResponse(BaseModel):
+    file_count: int
+    first_pass: EmbeddingPassPlan
+    retry_pass: EmbeddingPassPlan
+
+
+@router.get("/embedding-plan", response_model=EmbeddingPlanResponse)
+def get_embedding_plan(
+    file_count: int = Query(
+        0, ge=0, le=_MAX_FILE_IDS_PER_JOB,
+        description="How many files the run would submit.",
+    ),
+):
+    """Resolve the worker count and per-file budget a job would use.
+
+    Exactly what ``POST /similarity/index/{name}/jobs/add`` does when ``workers``
+    and ``time_limit`` are omitted, answered before the job is created so a UI
+    can show the real numbers rather than the word "auto". Also resolves the
+    retry pass -- fewer workers, a longer budget -- which is the documented
+    second half of the registration loop.
+
+    It lives here, beside the job endpoint whose two optional fields it is
+    answering for, rather than in ``/client-config``: that is a one-shot startup
+    document, while this depends on the selection and is re-asked as it changes.
+    It takes no index name because none of it depends on an index -- the numbers
+    come from the host's cores and free RAM, the embedding knobs, and the file
+    count.
+
+    Read-only and side-effect free: it resolves nothing, loads no index and
+    creates no job. ``time_limit`` is always the effective budget, never the
+    raw ``0`` that means "leave the SDK's own default alone".
+    """
+    return EmbeddingPlanResponse(**core.plan_embedding_run(file_count))
+
+
 @router.get("/index/{name}/jobs", response_model=JobListResponse)
 def list_index_jobs(
     name: str,

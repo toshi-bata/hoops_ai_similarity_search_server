@@ -566,9 +566,12 @@
           <div id="register-selection" class="register-selection"></div>
         </div>
 
-        <!-- Optional tuning, matching the job API (omit for automatic sizing).
-             A short time limit + many workers is the first pass; few workers +
-             a long limit is the retry pass. -->
+        <!-- Optional tuning, matching the job API. Both fields are pre-filled
+             from GET /similarity/embedding-plan with the values the run will
+             really use, and refilled with the retry pass values when Resubmit
+             appears: a short time limit + many workers is the first pass, few
+             workers + a long limit is the retry pass. Clear a field to send
+             nothing and let the server size that half of the run. -->
         <div class="register-options">
           <label>Workers
             <input id="register-workers" type="number" min="1" max="64" placeholder="auto" />
