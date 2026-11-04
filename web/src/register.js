@@ -169,6 +169,28 @@ export function createRegister({ getIndexName, onJobComplete }) {
   // must not land in the fields.
   let planToken = 0;
 
+  // Per-field ownership. The plan may write a field only while the user has
+  // not touched it; one keystroke and the field is theirs. The two fields are
+  // tracked separately, so typing a worker count does not freeze the time
+  // limit at a stale number.
+  //
+  // Emptying a field counts as editing it. That is deliberate and must stay:
+  // an empty field is the documented way to say "server, size this run at
+  // execution time" (readOptions() omits it, and the job API treats an omitted
+  // field as auto). Helpfully refilling an emptied field would take that
+  // choice away, and the user would have no way to express it at all.
+  //
+  // Ownership returns to the plan at exactly two moments: when the dialog is
+  // opened, and when a job settles. Both start a new situation -- a fresh
+  // dialog, or the retry pass, which needs its own worker count and budget --
+  // so carrying the previous one's input forward would say nothing true.
+  const planOwns = { workers: true, timeLimit: true };
+
+  function releasePlanFields() {
+    planOwns.workers = true;
+    planOwns.timeLimit = true;
+  }
+
   function clearPlanFields() {
     // Also invalidate any plan still in flight, so a late answer cannot refill
     // fields that a caller has just deliberately emptied.
@@ -198,12 +220,16 @@ export function createRegister({ getIndexName, onJobComplete }) {
   }
 
   function applyPlan(pass, label) {
-    el('register-workers').value = String(pass.workers);
-    el('register-timelimit').value = String(pass.time_limit);
-    el('register-workers').title = describeBasis(label, pass);
-    el('register-timelimit').title =
-      `${label}: ${pass.time_limit}s per file. Files that exceed it are ` +
-      'reported as retryable; resubmit those with a longer budget.';
+    if (planOwns.workers) {
+      el('register-workers').value = String(pass.workers);
+      el('register-workers').title = describeBasis(label, pass);
+    }
+    if (planOwns.timeLimit) {
+      el('register-timelimit').value = String(pass.time_limit);
+      el('register-timelimit').title =
+        `${label}: ${pass.time_limit}s per file. Files that exceed it are ` +
+        'reported as retryable; resubmit those with a longer budget.';
+    }
   }
 
   // Fill the fields for a first-pass run over `fileCount` files. Pass null when
@@ -563,6 +589,11 @@ export function createRegister({ getIndexName, onJobComplete }) {
     // own no selection, so they are left exactly as they were.
     if (typeof onSettled === 'function') onSettled(job);
 
+    // A settled job ends the situation the fields were filled for, so the plan
+    // may write them again -- which is what lets the retry-pass values below
+    // land even if the first pass was run with hand-typed numbers.
+    releasePlanFields();
+
     // After the selection has been settled, because clearing it re-resolves the
     // first-pass plan: offering the retry pass is only half of it, so fill the
     // fields with the values that pass actually uses. Pressing Resubmit then
@@ -667,6 +698,7 @@ export function createRegister({ getIndexName, onJobComplete }) {
     const name = getIndexName();
     if (!name) return;
     resetRunUi();
+    releasePlanFields();
     // Fills Workers / Time limit with the host's numbers right away; the count
     // is folded in once a folder is picked.
     setSelection([]);
@@ -703,6 +735,11 @@ export function createRegister({ getIndexName, onJobComplete }) {
   el('register-pick-files').addEventListener('click', () => filesInput.click());
   folderInput.addEventListener('change', onFolderChosen);
   filesInput.addEventListener('change', onFolderChosen);
+  // Any edit, including clearing the field, hands it to the user until the
+  // dialog is reopened or a job settles. 'input' rather than 'change' so the
+  // plan stops writing on the first keystroke, not when focus leaves.
+  el('register-workers').addEventListener('input', () => { planOwns.workers = false; });
+  el('register-timelimit').addEventListener('input', () => { planOwns.timeLimit = false; });
   submitButton.addEventListener('click', () => runBulk().catch(() => {}));
   resubmitButton.addEventListener('click', () => resubmit().catch(() => {}));
   cancelButton.addEventListener('click', async () => {

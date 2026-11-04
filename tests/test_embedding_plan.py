@@ -276,6 +276,91 @@ class TestSizingIsNotDuplicatedInTheClient(unittest.TestCase):
         self.assertIn("getEmbeddingPlan", register)
 
 
+class TestTypedValuesSurviveTheNextPlan(unittest.TestCase):
+    """A field the user has touched belongs to the user.
+
+    Pre-filling Workers / Time limit meant the dialog re-fetched the plan on
+    every selection change and wrote both fields -- so typing a worker count
+    and then picking a folder silently threw the number away.
+    """
+
+    def setUp(self):
+        self.text = (REPO_ROOT / "web" / "src" / "register.js").read_text(encoding="utf-8")
+
+    def _body(self, head, tail):
+        start = self.text.index(head)
+        return self.text[start:self.text.index(tail, start)]
+
+    def test_the_plan_writes_only_fields_it_still_owns(self):
+        body = self._body("function applyPlan(", "\n  }")
+        self.assertIn("if (planOwns.workers) {", body)
+        self.assertIn("if (planOwns.timeLimit) {", body)
+        # Neither value nor the explanatory title may be written over a value
+        # the user chose: a basis string describing a number that is no longer
+        # in the box is worse than no tooltip.
+        for assignment in (
+            "el('register-workers').value",
+            "el('register-workers').title",
+            "el('register-timelimit').value",
+            "el('register-timelimit').title",
+        ):
+            with self.subTest(assignment=assignment):
+                self.assertIn(assignment, body)
+        self.assertEqual(body.count("planOwns."), 2)
+
+    def test_the_two_fields_are_tracked_separately(self):
+        # Typing in one must not freeze the other at a stale number.
+        self.assertIn("const planOwns = { workers: true, timeLimit: true };", self.text)
+        self.assertIn(
+            "el('register-workers').addEventListener('input', "
+            "() => { planOwns.workers = false; });",
+            self.text,
+        )
+        self.assertIn(
+            "el('register-timelimit').addEventListener('input', "
+            "() => { planOwns.timeLimit = false; });",
+            self.text,
+        )
+
+    def test_clearing_a_field_counts_as_editing_it(self):
+        # The listeners take no value into account, so an emptied field is
+        # owned by the user exactly like a filled one. An empty field is the
+        # documented "server, you size it" request; refilling it would remove
+        # the only way to ask for that.
+        for field in ("workers", "timeLimit"):
+            with self.subTest(field=field):
+                handler = self.text[
+                    self.text.index(f"planOwns.{field} = false;") - 120:
+                    self.text.index(f"planOwns.{field} = false;")
+                ]
+                self.assertNotIn(".value", handler)
+                self.assertNotIn("if (", handler)
+
+    def test_ownership_returns_on_open_and_when_a_job_settles(self):
+        opening = self._body("function open() {", "function close() {")
+        self.assertIn("releasePlanFields();", opening)
+        settled = self._body("async function onJobSettled(", "async function resubmit(")
+        self.assertIn("releasePlanFields();", settled)
+        # And nowhere else: a third call site would be another way to lose
+        # input without the user asking.
+        self.assertEqual(self.text.count("releasePlanFields();"), 2)
+
+    def test_the_retry_values_are_still_applied_after_a_job(self):
+        settled = self._body("async function onJobSettled(", "async function resubmit(")
+        self.assertIn("showRetryPassPlan(retryableIds.length)", settled)
+        # The release has to come first, or a run configured by hand would
+        # never see the retry pass's numbers.
+        self.assertLess(
+            settled.index("releasePlanFields();"),
+            settled.index("showRetryPassPlan("),
+        )
+
+    def test_a_selection_change_does_not_release_ownership(self):
+        body = self._body("function setSelection(", "\n  }")
+        self.assertIn("showFirstPassPlan(", body)
+        self.assertNotIn("releasePlanFields", body)
+
+
 class TestOmittedOptionsStillReachTheServerSizing(unittest.TestCase):
     """An empty field must keep meaning "you decide"."""
 
