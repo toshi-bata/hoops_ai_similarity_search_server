@@ -15,6 +15,7 @@ from unittest.mock import patch
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import core
+import embeddings
 import index_registry
 import config
 
@@ -256,6 +257,100 @@ class NamedCheckpointResolution(unittest.TestCase):
                 os.environ.pop("HOOPS_AI_EMBEDDINGS_MODEL_NAME", None)
                 resolved = core.resolve_checkpoint_path()
             self.assertEqual(resolved, app_models / "best.ckpt")
+
+
+class HalfConfiguredSdkDirectory(unittest.TestCase):
+    """HOOPS_AI_SDK_DIR set, but no packages/ underneath.
+
+    The third checkpoint location used to be appended by calling
+    get_packages_dir(), which raises when packages/ is absent. Because that
+    happened while the candidate list was being built, the lookup died before
+    trying either of the first two locations, and a checkpoint sitting in
+    <APP_ROOT>/models was never found -- index creation answered 503.
+    """
+
+    def setUp(self):
+        self._patch_env = patch.object(config, "load_env_file", lambda *a, **k: None)
+        self._patch_env.start()
+        self.addCleanup(self._patch_env.stop)
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.tmp = pathlib.Path(self._tmp.name)
+        self.data_models = self.tmp / "data" / "models"
+        self.app_root = self.tmp / "app"
+        self.app_models = self.app_root / "models"
+        # An SDK root that exists but holds nothing: exactly the deployment
+        # that failed.
+        self.sdk = self.tmp / "sdk"
+        for d in (self.data_models, self.app_models, self.sdk):
+            d.mkdir(parents=True)
+
+    def _env(self, **extra):
+        env = {"HOOPS_AI_SDK_DIR": str(self.sdk)}
+        env.update(extra)
+        return env
+
+    def test_checkpoint_in_app_models_is_still_found(self):
+        (self.app_models / "m.ckpt").write_bytes(b"x")
+        with patch.multiple(config, MODELS_DIR=self.data_models, APP_ROOT=self.app_root), \
+             patch.dict(os.environ, self._env(HOOPS_AI_EMBEDDINGS_MODEL_NAME="m.ckpt"),
+                        clear=False):
+            resolved = core.resolve_checkpoint_path()
+        self.assertEqual(resolved, self.app_models / "m.ckpt")
+
+    def test_checkpoint_in_the_data_root_is_still_found(self):
+        (self.data_models / "m.ckpt").write_bytes(b"x")
+        with patch.multiple(config, MODELS_DIR=self.data_models, APP_ROOT=self.app_root), \
+             patch.dict(os.environ, self._env(HOOPS_AI_EMBEDDINGS_MODEL_NAME="m.ckpt"),
+                        clear=False):
+            resolved = core.resolve_checkpoint_path()
+        self.assertEqual(resolved, self.data_models / "m.ckpt")
+
+    def test_building_the_candidate_list_never_raises(self):
+        # A PathConfigError here is the bug: a missing optional location is not
+        # a configuration error.
+        with patch.multiple(config, MODELS_DIR=self.data_models, APP_ROOT=self.app_root), \
+             patch.dict(os.environ, self._env(HOOPS_AI_EMBEDDINGS_MODEL_NAME="nope.ckpt"),
+                        clear=False):
+            with self.assertRaises(core.ModelResolutionError):
+                core.resolve_checkpoint_path()
+
+    def test_the_error_lists_the_places_that_were_searched(self):
+        with patch.multiple(config, MODELS_DIR=self.data_models, APP_ROOT=self.app_root), \
+             patch.dict(os.environ, self._env(HOOPS_AI_EMBEDDINGS_MODEL_NAME="nope.ckpt"),
+                        clear=False):
+            with self.assertRaises(core.ModelResolutionError) as ctx:
+                core.resolve_checkpoint_path()
+        msg = str(ctx.exception)
+        self.assertIn(str(self.data_models / "nope.ckpt"), msg)
+        self.assertIn(str(self.app_models / "nope.ckpt"), msg)
+        # And it says why the third one is absent from that list.
+        self.assertIn("HOOPS_AI_SDK_DIR", msg)
+        self.assertIn("not searched", msg)
+
+    def test_a_root_without_packages_is_not_configured(self):
+        with patch.dict(os.environ, self._env(), clear=False):
+            self.assertFalse(core.sdk_dir_configured())
+            self.assertIsNone(embeddings.sdk_trained_models_dir())
+
+    def test_a_root_with_packages_is_configured(self):
+        (self.sdk / "packages" / "trained_ml_models").mkdir(parents=True)
+        with patch.dict(os.environ, self._env(), clear=False):
+            self.assertTrue(core.sdk_dir_configured())
+            self.assertEqual(
+                embeddings.sdk_trained_models_dir(),
+                self.sdk / "packages" / "trained_ml_models",
+            )
+
+    def test_an_unset_variable_behaves_as_before(self):
+        (self.app_models / "m.ckpt").write_bytes(b"x")
+        env = {k: v for k, v in os.environ.items() if k != "HOOPS_AI_SDK_DIR"}
+        env["HOOPS_AI_EMBEDDINGS_MODEL_NAME"] = "m.ckpt"
+        with patch.multiple(config, MODELS_DIR=self.data_models, APP_ROOT=self.app_root), \
+             patch.dict(os.environ, env, clear=True):
+            self.assertFalse(core.sdk_dir_configured())
+            self.assertIsNone(embeddings.sdk_trained_models_dir())
+            self.assertEqual(core.resolve_checkpoint_path(), self.app_models / "m.ckpt")
 
 
 class IndexModelConsistency(unittest.TestCase):

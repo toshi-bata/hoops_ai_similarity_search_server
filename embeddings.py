@@ -190,7 +190,13 @@ def get_sdk_dir() -> pathlib.Path:
 
 
 def sdk_dir_configured() -> bool:
-    """Return True when ``HOOPS_AI_SDK_DIR`` is set to an existing directory.
+    """Return True when ``HOOPS_AI_SDK_DIR`` points at a usable SDK install.
+
+    Usable means the directory exists *and* holds ``packages/``, because that
+    subdirectory is the only part of an install this server reads. Checking the
+    root alone once called a half-configured directory available, and every
+    caller that acted on that answer then hit a ``PathConfigError`` from
+    ``get_packages_dir()``.
 
     Lets default-index consumers check availability without raising, so a
     package with no SDK install simply omits the built-in default index.
@@ -198,7 +204,22 @@ def sdk_dir_configured() -> bool:
     value = os.environ.get("HOOPS_AI_SDK_DIR")
     if not value:
         return False
-    return pathlib.Path(value).is_dir()
+    return (pathlib.Path(value) / "packages").is_dir()
+
+
+def sdk_trained_models_dir() -> Optional[pathlib.Path]:
+    """Return ``<HOOPS_AI_SDK_DIR>/packages/trained_ml_models``, or None.
+
+    Never raises and never checks the leaf directory: this is the optional
+    "reuse the checkpoints of a full install" convenience, so having nowhere to
+    look is an ordinary outcome, not a configuration error. ``get_sdk_dir()``
+    says callers must degrade gracefully when the variable is unset; a variable
+    that is set but points at a directory without ``packages/`` is the same
+    situation and gets the same treatment.
+    """
+    if not sdk_dir_configured():
+        return None
+    return pathlib.Path(os.environ["HOOPS_AI_SDK_DIR"]) / "packages" / "trained_ml_models"
 
 
 def get_packages_dir() -> pathlib.Path:
@@ -292,9 +313,13 @@ def resolve_checkpoint_path() -> pathlib.Path:
       2. ``<APP_ROOT>/models/<name>``
       3. ``<HOOPS_AI_SDK_DIR>/packages/trained_ml_models/<name>``
 
-    Other ``*.ckpt`` files sitting next to it are ignored: naming the file is
-    explicit, so a directory holding several tutorial checkpoints is fine. If
-    the named file is in none of the three, an error lists all three locations.
+    The third is only consulted when ``HOOPS_AI_SDK_DIR`` points at a directory
+    that actually holds ``packages/``; otherwise it is dropped silently, since
+    reusing an SDK install's checkpoints is a convenience and not having one is
+    normal. The first two are always tried. Other ``*.ckpt`` files sitting next
+    to the named one are ignored: naming the file is explicit, so a directory
+    holding several tutorial checkpoints is fine. If the named file is in none
+    of the locations searched, an error lists every one of them.
 
     When the variable is unset the checkpoint is resolved from the ``models/``
     directories (redistributed package, see ``resolve_bundled_checkpoint``).
@@ -308,8 +333,15 @@ def resolve_checkpoint_path() -> pathlib.Path:
         config.MODELS_DIR,
         config.APP_ROOT.joinpath("models"),
     ]
-    if sdk_dir_configured():
-        search_dirs.append(get_packages_dir().joinpath("trained_ml_models"))
+    # The third location is optional, so adding it must not raise. It used to
+    # be appended via get_packages_dir(), which raises when packages/ is
+    # missing -- and because that happened while the list was being built, an
+    # SDK directory without packages/ aborted the lookup before either of the
+    # first two locations was tried, even when the checkpoint was sitting in
+    # the second one.
+    sdk_models = sdk_trained_models_dir()
+    if sdk_models is not None:
+        search_dirs.append(sdk_models)
     for directory in search_dirs:
         candidate = directory.joinpath(ckpt_name)
         if candidate.is_file():
@@ -320,9 +352,15 @@ def resolve_checkpoint_path() -> pathlib.Path:
             return candidate
 
     searched = "; ".join(str(d.joinpath(ckpt_name)) for d in search_dirs)
+    skipped = (
+        ""
+        if sdk_models is not None
+        else " The HOOPS_AI_SDK_DIR location was not searched: the variable is "
+             "unset or does not point at a directory containing 'packages'."
+    )
     msg = (
         f"[MODEL] Checkpoint '{ckpt_name}' (HOOPS_AI_EMBEDDINGS_MODEL_NAME) was "
-        f"not found. Looked in: {searched}."
+        f"not found. Looked in: {searched}.{skipped}"
     )
     logger.error(msg)
     print(msg, flush=True)
