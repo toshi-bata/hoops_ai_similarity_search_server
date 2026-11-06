@@ -22,6 +22,7 @@ import { legendRenderOrder } from './legend-order.js';
 import { splitFocusedCandidates } from './model-focus.js';
 import { clientId } from './client-id.js';
 import { openTagPopover } from './tag-picker.js';
+import { viewportTheme } from './viewport-theme.js';
 import {
   showMap,
   addMapModels,
@@ -1558,6 +1559,11 @@ export function createShapeMap({
     lastRowMenuPoint = { x: event.clientX, y: event.clientY };
     const menu = document.createElement('div');
     menu.className = 'map-row-menu';
+    // The menu is position: fixed and is appended to <body> (see below), so
+    // it is not a descendant of .viewer-pane and does not inherit the
+    // viewport theme tokens. Carry the pane's current theme over by hand so
+    // a menu raised from the legend matches the panel it came from.
+    menu.dataset.viewportTheme = viewportTheme();
     for (const item of items) {
       const button = document.createElement('button');
       button.type = 'button';

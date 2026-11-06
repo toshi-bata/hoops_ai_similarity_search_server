@@ -50,6 +50,22 @@
         </div>
       </div>
       <h1 class="app-title">HOOPS AI Similarity Search</h1>
+
+      <!-- Light/dark switch for the viewport (the 3D viewer and the Shape
+           Map share one pane, so one button serves both). The icon and the
+           labels are set from src/viewport-theme.js, which also restores the
+           last choice. Only .viewer-pane changes; the header, side panel and
+           gallery are already light. -->
+      <button
+        id="viewport-theme-toggle"
+        type="button"
+        class="viewport-theme-toggle"
+        title="Switch the viewport to a light background"
+        aria-label="Switch the viewport to a light background"
+        aria-pressed="false"
+      >
+        <svg id="viewport-theme-icon" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"></svg>
+      </button>
     </header>
 
     <main class="app-main">

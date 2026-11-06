@@ -25,6 +25,7 @@ import { createTagPicker, openTagPopover, refreshTagVocabulary, setTagCandidateI
 import { showPart, showEmptyViewer, showViewerMessage } from './viewer.js';
 import { createShapeMap } from './shape-map.js';
 import { createRegister } from './register.js';
+import { initViewportTheme } from './viewport-theme.js';
 
 // The virtual-scroll Browse gallery for the current index (null until chosen).
 let gallery = null;
@@ -2694,6 +2695,7 @@ compare = initCompare({
   },
 });
 initAppMenu();
+initViewportTheme();
 initTagsUi();
 initGalleryBulkUi();
 initMapUi();
