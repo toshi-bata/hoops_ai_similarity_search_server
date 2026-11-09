@@ -203,6 +203,40 @@ class TestEffectiveTimeLimit(unittest.TestCase):
         ))
 
 
+class TestASingleWorkerIgnoresTheTimeLimit(unittest.TestCase):
+    """hoops_ai does not enforce a time limit when it runs one worker.
+
+    The single-worker path is the one it uses to finish heavy parts, and it
+    lets them run to completion: one file with time_limit=120 took 1,771 s at
+    num_workers=1 and timed out at 120.2 s at num_workers=2. A header that
+    prints the number without that caveat reads as a budget that was in force.
+    """
+
+    NOTE = "not enforced with num_workers=1"
+
+    def test_one_worker_says_the_limit_was_not_enforced(self):
+        text = _report_header({"num_workers": 1, "time_limit": 120})
+        self.assertIn(self.NOTE, text)
+        self.assertIn("time_limit=120s", text)
+
+    def test_one_worker_keeps_the_sdk_default_wording_too(self):
+        text = _report_header({"num_workers": 1, "time_limit": 0})
+        self.assertIn("SDK default", text)
+        self.assertIn("HOOPS_AI_EMBED_TIME_LIMIT unset", text)
+        self.assertIn(self.NOTE, text)
+        self.assertNotIn("time_limit=0s", text)
+
+    def test_two_workers_read_exactly_as_before(self):
+        self.assertEqual(
+            _report_header({"num_workers": 2, "time_limit": 120}),
+            "# Embedding: num_workers=2 time_limit=120s",
+        )
+
+    def test_an_unknown_worker_count_is_not_annotated(self):
+        text = _report_header({"num_workers": None, "time_limit": 120})
+        self.assertNotIn(self.NOTE, text)
+
+
 def _report_header(timings):
     """Render a report for *timings* and return its `# Embedding:` line."""
     import tempfile

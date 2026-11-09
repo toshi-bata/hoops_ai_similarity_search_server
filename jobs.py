@@ -221,10 +221,19 @@ def _write_add_job_report(
         limit_text = "-"
     else:
         limit_text = f"{raw_limit}s"
-    lines.append(
-        f"# Embedding: num_workers={timings.get('num_workers', '-')} "
-        f"time_limit={limit_text}"
-    )
+    # hoops_ai does not apply a time limit when it runs a single worker: that
+    # path is the same one it uses to finish heavy parts one at a time, and it
+    # lets them run to completion. Measured on one file with time_limit=120:
+    # 1,771 s and no timeout at num_workers=1, 120.2 s at num_workers=2. So
+    # the limit is reported, but not as something that is in force.
+    workers = timings.get("num_workers", "-")
+    if workers == 1 and raw_limit is not None:
+        note = "not enforced with num_workers=1"
+        if limit_text.endswith(")"):
+            limit_text = f"{limit_text[:-1]}; {note})"
+        else:
+            limit_text = f"{limit_text} ({note})"
+    lines.append(f"# Embedding: num_workers={workers} time_limit={limit_text}")
     lines.append(f"# Elapsed: {_fmt(timings.get('embed_seconds'))}")
     # "selected" is what the caller picked; "input" is what reached the SDK.
     # The two differ when the selection held byte-identical copies, and that
