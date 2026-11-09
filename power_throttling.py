@@ -44,6 +44,12 @@ _PROCESS_POWER_THROTTLING_CURRENT_VERSION = 1
 # StateMask.
 _PROCESS_POWER_THROTTLING_STATE_SIZE = 12
 
+# The Windows error code from the last refused declaration, or None when the
+# last call succeeded, was made off Windows, or never reached the API. Read by
+# main.py so a refusal can be logged with a reason instead of a bare "not
+# applied".
+LAST_ERROR = None
+
 
 def opt_out_of_power_throttling() -> bool:
     """Ask Windows never to throttle this process's execution speed.
@@ -57,6 +63,9 @@ def opt_out_of_power_throttling() -> bool:
     function: a server that cannot make this request must still start, and a
     worker that cannot make it must still embed.
     """
+    global LAST_ERROR
+
+    LAST_ERROR = None
     if sys.platform != "win32":
         return False
     try:
@@ -73,11 +82,25 @@ def opt_out_of_power_throttling() -> bool:
             ]
 
         kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        # Declare the signatures before calling. Without them ctypes treats a
+        # return value as a 32-bit int, which truncates the 64-bit pseudo
+        # handle (-1) that GetCurrentProcess() returns; Windows then rejects
+        # the call with ERROR_INVALID_HANDLE (6). Measured on this machine:
+        # undeclared, the API refused with error 6; declared, it accepted.
+        kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+        kernel32.SetProcessInformation.argtypes = [
+            wintypes.HANDLE,
+            ctypes.c_int,
+            ctypes.c_void_p,
+            wintypes.DWORD,
+        ]
+        kernel32.SetProcessInformation.restype = wintypes.BOOL
         state = _PowerThrottlingState(
             Version=_PROCESS_POWER_THROTTLING_CURRENT_VERSION,
             ControlMask=_PROCESS_POWER_THROTTLING_EXECUTION_SPEED,
             StateMask=0,
         )
+        ctypes.set_last_error(0)
         ok = kernel32.SetProcessInformation(
             kernel32.GetCurrentProcess(),
             _PROCESS_INFORMATION_CLASS_POWER_THROTTLING,
@@ -87,6 +110,12 @@ def opt_out_of_power_throttling() -> bool:
             ctypes.pointer(state),
             _PROCESS_POWER_THROTTLING_STATE_SIZE,
         )
+        if not ok:
+            # Read only on failure. A Win32 API does not clear the last error
+            # when it succeeds, so a successful call still reports whatever
+            # failed before it -- this one was observed returning true with
+            # error 6 left over from the undeclared attempt that preceded it.
+            LAST_ERROR = ctypes.get_last_error()
         return bool(ok)
     except Exception:
         return False

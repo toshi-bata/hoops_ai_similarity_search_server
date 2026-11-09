@@ -136,9 +136,13 @@ async def lifespan(app: FastAPI):
     # once, rather than where it is made: at module level there is no logging
     # configured yet, and every spawned embedding worker runs that line too.
     if sys.platform == "win32":
+        outcome = "applied" if _POWER_THROTTLING_OPT_OUT else "not applied"
+        # A refusal carries a Win32 error code; say which one, so a silent
+        # "not applied" never has to be diagnosed from scratch again.
+        if not _POWER_THROTTLING_OPT_OUT and power_throttling.LAST_ERROR is not None:
+            outcome = f"{outcome} (Windows error {power_throttling.LAST_ERROR})"
         logging.getLogger(__name__).info(
-            "[POWER] Windows power-throttling opt-out: %s",
-            "applied" if _POWER_THROTTLING_OPT_OUT else "not applied",
+            "[POWER] Windows power-throttling opt-out: %s", outcome
         )
     core.run_startup_maintenance()
     core.init_hoops_license()

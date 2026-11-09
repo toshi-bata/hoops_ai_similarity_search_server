@@ -24,18 +24,46 @@ MAIN_PY = REPO_ROOT / "main.py"
 OPT_OUT = "opt_out_of_power_throttling"
 
 
+class _FakeEntryPoint:
+    """A kernel32 export that accepts the ctypes signature declarations.
+
+    A bound method cannot carry ``restype``/``argtypes``, and those
+    declarations are the subject of half the tests here, so each export is its
+    own attribute-bearing callable.
+    """
+
+    def __init__(self, body):
+        self.body = body
+        self.restype = None
+        self.argtypes = None
+
+    def __call__(self, *args):
+        return self.body(*args)
+
+
 class _FakeKernel32:
     """Stands in for kernel32 and records the SetProcessInformation call."""
 
-    def __init__(self, result=1):
+    def __init__(self, result=1, last_error=None):
         self.result = result
+        self.last_error = last_error
         self.calls = []
+        self.GetCurrentProcess = _FakeEntryPoint(self._get_current_process)
+        self.SetProcessInformation = _FakeEntryPoint(self._set_process_information)
 
-    def GetCurrentProcess(self):  # noqa: N802 - mirrors the Win32 name
+    @staticmethod
+    def _get_current_process():
         return -1
 
-    def SetProcessInformation(self, handle, info_class, info, size):  # noqa: N802
+    def _set_process_information(self, handle, info_class, info, size):
         self.calls.append((handle, info_class, info, size))
+        if self.last_error is not None:
+            # Real Win32 APIs leave the last error behind whether they succeed
+            # or fail; the fake does the same so the module's handling of it
+            # can be tested.
+            import ctypes
+
+            ctypes.set_last_error(self.last_error)
         return self.result
 
 
@@ -62,13 +90,27 @@ class TheRequestMadeOfWindows(unittest.TestCase):
         except (ImportError, ValueError):
             self.skipTest("ctypes.wintypes is Windows-only")
 
-    def _call(self, result=1):
-        fake = _FakeKernel32(result)
+    def _call(self, result=1, last_error=None):
+        fake = _FakeKernel32(result, last_error)
         with patch.object(sys, "platform", "win32"), patch(
             "ctypes.WinDLL", return_value=fake, create=True
         ):
             returned = power_throttling.opt_out_of_power_throttling()
         return returned, fake
+
+    def test_it_declares_the_signatures_before_calling(self):
+        # Left undeclared, ctypes takes the return value of
+        # GetCurrentProcess() for a 32-bit int and truncates the 64-bit pseudo
+        # handle, and Windows refuses the call with ERROR_INVALID_HANDLE. That
+        # shipped once: the call reported success nowhere and the workers
+        # stayed on the efficiency cores.
+        from ctypes import wintypes
+
+        _, fake = self._call()
+        self.assertIs(fake.GetCurrentProcess.restype, wintypes.HANDLE)
+        self.assertIsNotNone(fake.SetProcessInformation.argtypes)
+        self.assertIs(fake.SetProcessInformation.argtypes[0], wintypes.HANDLE)
+        self.assertIs(fake.SetProcessInformation.restype, wintypes.BOOL)
 
     def test_it_asks_for_the_power_throttling_information_class(self):
         returned, fake = self._call()
@@ -97,11 +139,42 @@ class TheRequestMadeOfWindows(unittest.TestCase):
         self.assertFalse(returned)
         self.assertEqual(len(fake.calls), 1)
 
+    def test_a_refusal_keeps_the_windows_error_code(self):
+        returned, _ = self._call(result=0, last_error=6)
+        self.assertFalse(returned)
+        self.assertEqual(power_throttling.LAST_ERROR, 6)
+
+    def test_success_does_not_pick_up_a_stale_error(self):
+        # Win32 does not clear the last error on success, so reading it after
+        # an accepted call reports whatever failed before it.
+        returned, _ = self._call(result=1, last_error=6)
+        self.assertTrue(returned)
+        self.assertIsNone(power_throttling.LAST_ERROR)
+
     def test_a_kernel32_that_will_not_load_is_reported_without_raising(self):
         with patch.object(sys, "platform", "win32"), patch(
             "ctypes.WinDLL", side_effect=OSError("boom"), create=True
         ):
             self.assertFalse(power_throttling.opt_out_of_power_throttling())
+
+
+class TheRealApiAcceptsIt(unittest.TestCase):
+    """No mock: this asks the running Windows for real.
+
+    The fakes check what is sent, not whether Windows accepts it -- which is
+    exactly how a call that always failed passed its tests once. The subject
+    is the pytest process itself and the declaration has no side effect worth
+    undoing.
+    """
+
+    def test_windows_accepts_the_declaration(self):
+        if sys.platform != "win32":
+            self.skipTest("the real API only exists on Windows")
+        self.assertTrue(
+            power_throttling.opt_out_of_power_throttling(),
+            f"Windows refused the declaration with error "
+            f"{power_throttling.LAST_ERROR}",
+        )
 
 
 class MainCallsItWhereTheWorkersWillSeeIt(unittest.TestCase):
