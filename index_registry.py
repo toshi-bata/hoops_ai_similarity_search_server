@@ -1124,11 +1124,13 @@ def _embed_bodies_for_index(
             )
 
         # Reorder rows_by_fid into the caller's *file_ids* order rather than
-        # embed_shape_batch's completion order. embed_shape_batch spawns one
-        # worker process per file (see the intraop_threads note above), so
-        # batch.ids -- and therefore the first-seen order built just above --
-        # reflects which worker finished first and varies from run to run. The
-        # Shape Map clusters with FAISS k-means seeded from row numbers
+        # embed_shape_batch's completion order. embed_shape_batch keeps a pool
+        # of num_workers processes alive for the whole batch (see the
+        # intraop_threads note above), handing each worker the next file as it
+        # frees up and replacing only a worker that timed out, so batch.ids --
+        # and therefore the first-seen order built just above -- reflects the
+        # order in which the pool returned results and varies from run to run.
+        # The Shape Map clusters with FAISS k-means seeded from row numbers
         # (seed=42), so a different stored row order seats different vectors on
         # the seeded rows and converges to a different clustering even for the
         # identical file set. Writing rows in file_ids order makes the stored

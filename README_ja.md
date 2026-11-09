@@ -424,6 +424,13 @@ make
 <HOOPS_AI_INSTALL_DIR>\.venv\Scripts\python.exe main.py --port 8000
 ```
 
+> **Windows 11 とハイブリッド CPU について。** Windows は、ウィンドウが見えていない
+> プロセスを省電力扱いにします。ハイブリッド CPU ではそのプロセスが E コアに
+> 押し込められるため、利用中にサーバーのコンソールがブラウザの背後に隠れていると、
+> 登録が 1.5 倍以上遅くなることがあります。サーバーは起動時に、自分自身と埋め込み
+> ワーカーをその対象から外すよう宣言するので、OS 側の設定を変更する必要はありません。
+> これは上記のように `main.py` として起動した場合に働きます。
+
 **Linux (headless server, no display):**
 ```bash
 ./start_server.sh --port 8000

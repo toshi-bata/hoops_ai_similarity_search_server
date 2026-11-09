@@ -425,6 +425,14 @@ From the repository root:
 <HOOPS_AI_INSTALL_DIR>\.venv\Scripts\python.exe main.py --port 8000
 ```
 
+> **Windows 11 and hybrid CPUs.** Windows puts a process whose windows are not
+> visible into a power-saving class, which on a hybrid CPU parks it on the
+> efficiency cores — and the server's console normally sits behind the browser
+> while the app is in use, so registration can take well over half as long
+> again. The server declares itself and its embedding workers exempt at
+> startup, so no OS setting has to be changed. This applies when the server is
+> started as `main.py`, as above.
+
 **Linux (headless server, no display):**
 ```bash
 ./start_server.sh --port 8000

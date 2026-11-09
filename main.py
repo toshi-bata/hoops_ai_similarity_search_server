@@ -9,13 +9,15 @@ domain modules reached through ``core``.
 The ``lifespan`` context manager drives startup and shutdown in this exact
 order. On startup: ``core.clear_embedding_memory_cache()`` drops process-local
 caches, ``core.log_resolved_configuration()`` records the effective settings,
-``core.run_startup_maintenance()`` TTL-sweeps the transient directories,
-``core.init_hoops_license()`` initialises the HOOPS license,
-``embeddings.log_compute_environment("STARTUP_ENV")`` logs the interpreter and
-math-library configuration (only when ``HOOPS_SEARCH_TIMING=1``), and
-``core.start_startup_warmup()`` kicks off the opt-in background index warmup. On
-shutdown a single step runs: ``jobs.get_index_job_store().shutdown(wait=False)``
-stops accepting new registration jobs without waiting for in-flight work.
+the Windows power-throttling opt-out made at import time is reported (Windows
+only -- see ``power_throttling.py``), ``core.run_startup_maintenance()``
+TTL-sweeps the transient directories, ``core.init_hoops_license()`` initialises
+the HOOPS license, ``embeddings.log_compute_environment("STARTUP_ENV")`` logs
+the interpreter and math-library configuration (only when
+``HOOPS_SEARCH_TIMING=1``), and ``core.start_startup_warmup()`` kicks off the
+opt-in background index warmup. On shutdown a single step runs:
+``jobs.get_index_job_store().shutdown(wait=False)`` stops accepting new
+registration jobs without waiting for in-flight work.
 
 ``main.py`` and ``core.py`` are the only two files permitted to ``import core``
 (pinned by ``tests/test_module_layout.py::ImportHygiene._IMPORT_CORE_ALLOWED``);
@@ -59,6 +61,27 @@ def _bootstrap_bundled_site_packages() -> None:
 
 
 _bootstrap_bundled_site_packages()
+
+import power_throttling
+
+# Declare this process exempt from Windows' power throttling (EcoQoS), then
+# remember the outcome so the lifespan can log it once. A no-op off Windows.
+#
+# This MUST stay at module level. On Windows multiprocessing has only the
+# spawn start method, and a spawned child re-imports the parent's main script
+# as ``__mp_main__`` -- so a call made here runs in the server process AND in
+# every embedding worker, while a call made inside a function or behind
+# ``if __name__ == "__main__":`` would reach the server alone. That difference
+# is the whole point: the opt-out is not inherited, and measurements with the
+# console hidden behind the browser put a parent-only declaration at 601 s
+# against 386 s when the workers declare it too (634 s with no declaration at
+# all). See power_throttling.py for the full table.
+#
+# It follows that the workers are covered only when the server is started as
+# ``python main.py``. Started through another main script -- ``uvicorn
+# main:app``, for instance -- the workers re-import that script instead, never
+# read this line, and stay throttled.
+_POWER_THROTTLING_OPT_OUT = power_throttling.opt_out_of_power_throttling()
 
 mimetypes.init()
 mimetypes.add_type("application/javascript", ".mjs")
@@ -109,6 +132,14 @@ async def lifespan(app: FastAPI):
     # on another port. Transient directories are TTL-swept instead.
     core.clear_embedding_memory_cache()
     core.log_resolved_configuration()
+    # Report the power-throttling declaration made at import time. Logged here,
+    # once, rather than where it is made: at module level there is no logging
+    # configured yet, and every spawned embedding worker runs that line too.
+    if sys.platform == "win32":
+        logging.getLogger(__name__).info(
+            "[POWER] Windows power-throttling opt-out: %s",
+            "applied" if _POWER_THROTTLING_OPT_OUT else "not applied",
+        )
     core.run_startup_maintenance()
     core.init_hoops_license()
     # Log this process's interpreter, SDK and math-library configuration once at
