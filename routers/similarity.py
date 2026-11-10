@@ -739,6 +739,12 @@ class TagDeleteResponse(BaseModel):
     removed_from: int
 
 
+class BulkTagClearResponse(BaseModel):
+    updated: int
+    removed: list[TagCount] = []
+    skipped: list[SkippedPart] = []
+
+
 class TagVocabularyResponse(BaseModel):
     """The names the application offers to choose from, NOT the tags in use.
 
@@ -2343,6 +2349,55 @@ def unassign_index_tag(
     return BulkTagResponse(
         tag=result["tag"],
         updated=result["updated"],
+        skipped=[SkippedPart(**s) for s in result["skipped"]],
+    )
+
+
+@router.post(
+    "/index/{name}/parts/tags/clear", response_model=BulkTagClearResponse
+)
+def clear_index_part_tags(
+    name: str,
+    response: Response,
+    payload: BulkTagUpdate,
+    confirm: bool = Query(
+        False,
+        description="Must be ``true``: this removes every tag from these parts.",
+    ),
+    if_match: Optional[str] = Header(None, alias="If-Match"),
+    client_id: Optional[str] = Header(None, alias="X-Client-Id"),
+):
+    """Strip every tag from several parts at once, ready to be tagged again.
+
+    Requires ``?confirm=true`` (409 without it), following the same rule as
+    ``DELETE /similarity/index/{name}/tags/{tag}``. The tag names stay in the
+    vocabulary, so the same words are still offered when these parts are
+    tagged a second time. Same skip policy as assignment.
+    """
+    _validate_name_or_raise(name)
+    if not payload.part_ids:
+        raise HTTPException(status_code=422, detail="No part_ids supplied.")
+    if not confirm:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Removing every tag from {len(payload.part_ids)} part(s) of "
+                f"index '{name}' cannot be undone. Re-send this request with "
+                "?confirm=true to proceed."
+            ),
+        )
+    try:
+        result, etag = core.clear_part_tags(
+            name, payload.part_ids, if_match=if_match, client_id=client_id
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        _raise_tag_error(exc)
+    response.headers["ETag"] = etag
+    return BulkTagClearResponse(
+        updated=result["updated"],
+        removed=[TagCount(**t) for t in result["removed"]],
         skipped=[SkippedPart(**s) for s in result["skipped"]],
     )
 

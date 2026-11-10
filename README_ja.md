@@ -1096,6 +1096,7 @@ GET    /similarity/index/{name}/parts/{part_id}/tags       # 1 部品のタグ
 PUT    /similarity/index/{name}/parts/{part_id}/tags       # 1 部品のタグを置き換えます
 POST   /similarity/index/{name}/tags/{tag}/parts           # 複数の部品に一括でタグを付けます
 DELETE /similarity/index/{name}/tags/{tag}/parts           # 複数の部品からタグを一括で外します
+POST   /similarity/index/{name}/parts/tags/clear?confirm=true  # 複数の部品からタグをすべて一括で外します
 DELETE /similarity/index/{name}/tags/{tag}?confirm=true    # そのタグをどこからでも廃止します
 ```
 

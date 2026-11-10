@@ -2098,19 +2098,22 @@ export function createShapeMap({
         } else if (cut && displayMode === 'models') {
           items.push({ label: 'Heat map', run: () => applyHeat(cut, null) });
         }
+        // Fixed when the menu is opened, so both tag items act on the parts
+        // the node stood for at that moment.
+        const nodeFileIds = [];
+        for (const group of cats) nodeFileIds.push(...groupFileIds(group));
         items.push({
           label: `Tag these ${node.count} parts\u2026`,
           // The popover takes the hold for itself; see openRowMenu().
           keepPeek: true,
           run: () => {
-            const fileIds = [];
-            for (const group of cats) fileIds.push(...groupFileIds(group));
             tagParts(
               `${node.count} parts at h ${Number(node.height).toFixed(2)}`,
-              fileIds,
+              nodeFileIds,
             );
           },
         });
+        for (const item of clearTagsMenuItems(nodeFileIds)) items.push(item);
         // A tree node stands for every category under it, so pinning it pins
         // them all. Partly pinned reads as not pinned, so the item offers to
         // add the rest rather than to take the pinned ones away.
@@ -4173,6 +4176,7 @@ export function createShapeMap({
         // what the write did, so there is nothing for the row to report.
         run: () => tagCluster(group),
       });
+      for (const item of clearTagsMenuItems(groupFileIds(group))) items.push(item);
     }
     // Last, because it is about what the viewer is showing rather than about
     // the category itself. Drawn only in the 3D-model view (see
@@ -4515,6 +4519,75 @@ export function createShapeMap({
     if (typeof onClusterTagged === 'function') onClusterTagged(tag, { reveal });
     noteTaggedWhileUntaggedOnly(data.updated);
     return data;
+  }
+
+  // The "take every tag off these parts" item, built in one place and used by
+  // both panels that stand for a set of parts: the Ward tree's node menu and
+  // the legend's cluster rows. Shared the way focusMenuItems() is, so the two
+  // can never drift apart in wording or in what they do.
+  //
+  // Returns an array, so a row with nothing to clear contributes no item.
+  //
+  // No `keepPeek`: this runs where it is pressed, like Isolate and Hide, so
+  // the preview is released with the menu rather than handed on.
+  function clearTagsMenuItems(fileIds) {
+    const count = fileIds ? fileIds.length : 0;
+    if (!count) return [];
+    return [{
+      label: `Remove tags from these ${count} parts\u2026`,
+      title: 'Remove every tag from these parts, so they can be tagged again',
+      run: () => { clearTagsFromParts(fileIds).catch(() => {}); },
+    }];
+  }
+
+  // What a clear did, in words. Modelled on tag-picker.js's describeResult():
+  // how much changed, and that some parts were passed over, so a partial write
+  // is never reported as a clean one.
+  function describeClearResult(data) {
+    const updated = Number(data && data.updated) || 0;
+    const removed = (data && data.removed) || [];
+    const skipped = (data && data.skipped) || [];
+    let text = `Removed ${removed.length} tag(s) from ${updated} part(s).`;
+    if (skipped.length) text += ` ${skipped.length} part(s) were skipped.`;
+    return text;
+  }
+
+  // The write behind clearTagsMenuItems(). The tags cannot be restored, so it
+  // asks first, with window.confirm() as the index delete (main.js) and the
+  // tag delete (tags.js) do.
+  async function clearTagsFromParts(fileIds) {
+    const name = getIndexName ? getIndexName() : null;
+    if (!name) return;
+    if (!fileIds || fileIds.length === 0) return;
+    const count = fileIds.length;
+    const ok = window.confirm(
+      `Remove every tag from these ${count} parts?\n\n`
+      + 'The tag names stay available for re-tagging. This cannot be undone.',
+    );
+    if (!ok) return;
+    let data;
+    try {
+      ({ data } = await api.clearPartTags(name, fileIds, { clientId: clientId() }));
+    } catch (err) {
+      showError(err);
+      return;
+    }
+    // The same refresh a successful tag write does (applyTagToParts), with
+    // `reveal: false`: a tag that has just been taken off has nothing to show
+    // in Browse. It still reloads the tag filter and the result filter, which
+    // both list tags that may have disappeared with this write.
+    if (typeof onClusterTagged === 'function') onClusterTagged(null, { reveal: false });
+    // Reported through the shared banner, which is the only message surface
+    // every screen has and already carries notices that are not failures (see
+    // the "no part named ..." miss in findPart). An item that runs where it is
+    // pressed has no popover of its own to report in.
+    showError(new Error(describeClearResult(data)));
+    // Nothing else to refresh: neither menu offers this outside cluster
+    // colouring (the tree is drawn only then, and the legend's rows are
+    // taggable only then), so the colours on screen never stand for the tags
+    // this just removed and the map needs no rebuild. The Untagged-only
+    // staleness counter is left alone for the same reason tagging only counts
+    // it up: re-projecting is the Reload button's job.
   }
 
   // Sync the viewer's node visibility to the legend checkboxes once the map has

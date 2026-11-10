@@ -295,6 +295,7 @@ from tags import (
     _bulk_tag_update,
     assign_tag,
     unassign_tag,
+    clear_part_tags,
     delete_tag,
     prune_tags,
     tags_by_part,

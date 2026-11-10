@@ -763,6 +763,21 @@ export function unassignTag(name, tag, partIds, { ifMatch, clientId } = {}) {
   );
 }
 
+// POST /similarity/index/{name}/parts/tags/clear -> { data: { updated,
+// removed: [{tag, count}], skipped: [{part_id, reason}] }, etag }. Strips every
+// tag from the named parts so they can be tagged again. The server requires
+// confirm=true (409 without it), so the caller must confirm with the user
+// first; the tag names themselves stay in the vocabulary.
+export function clearPartTags(name, partIds, { ifMatch, clientId } = {}) {
+  return request(`/similarity/index/${encodeURIComponent(name)}/parts/tags/clear`, {
+    method: 'POST',
+    query: { confirm: true },
+    body: { part_ids: partIds },
+    headers: tagWriteHeaders({ ifMatch, clientId }),
+    wantEtag: true,
+  });
+}
+
 // DELETE /similarity/index/{name}/tags/{tag} -> { data: { tag, removed_from },
 // etag }. Removes the tag from EVERY part. The server requires confirm=true
 // (409 without it), so the caller must confirm with the user first.

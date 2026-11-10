@@ -1107,6 +1107,7 @@ GET    /similarity/index/{name}/parts/{part_id}/tags       # one part's tags
 PUT    /similarity/index/{name}/parts/{part_id}/tags       # replace one part's tags
 POST   /similarity/index/{name}/tags/{tag}/parts           # tag many parts at once
 DELETE /similarity/index/{name}/tags/{tag}/parts           # untag many parts at once
+POST   /similarity/index/{name}/parts/tags/clear?confirm=true  # remove every tag from many parts at once
 DELETE /similarity/index/{name}/tags/{tag}?confirm=true    # retire a tag everywhere
 ```
 

@@ -570,6 +570,59 @@ def unassign_tag(
     )
 
 
+def clear_part_tags(
+    name: str,
+    part_ids: list[str],
+    if_match: Optional[str] = None,
+    client_id: Optional[str] = None,
+) -> tuple[dict[str, Any], str]:
+    """Remove every tag from each registered id in *part_ids*.
+
+    Written for re-tagging: a map node's parts are stripped so they can be
+    tagged again from scratch. The names themselves stay in the
+    application-wide vocabulary (see :func:`get_tag_vocabulary`), so the same
+    words are still offered when the parts are tagged a second time.
+
+    Returns ``({"updated", "removed", "skipped"}, etag)``, where ``removed``
+    counts how many parts lost each tag, ordered like :func:`get_index_tags`.
+    """
+    _validate_index_name(name)
+    _require_index_exists(name)
+    registered = index_registry._registered_index_ids(name)
+
+    def mutator(doc: dict[str, Any]):
+        updated = 0
+        counts: dict[str, int] = {}
+        skipped: list[dict[str, str]] = []
+        seen: set[str] = set()
+        for part_id in part_ids:
+            pid = str(part_id).strip()
+            if not pid or pid in seen:
+                continue
+            seen.add(pid)
+            if pid not in registered:
+                skipped.append({"part_id": pid, "reason": "not_registered"})
+                continue
+            entry = doc["parts"].get(pid)
+            if not entry or not entry["tags"]:
+                # Nothing to take away; not an error and not a change.
+                continue
+            for tag in entry["tags"]:
+                counts[tag] = counts.get(tag, 0) + 1
+            # The whole entry goes, as it does elsewhere once its last tag is
+            # gone -- an entry with an empty tag list is not kept.
+            doc["parts"].pop(pid, None)
+            updated += 1
+        removed = [
+            {"tag": tag, "count": count}
+            for tag, count in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+        ]
+        result = {"updated": updated, "removed": removed, "skipped": skipped}
+        return result, updated > 0
+
+    return _mutate_tags(name, if_match, mutator)
+
+
 def delete_tag(
     name: str,
     tag: str,

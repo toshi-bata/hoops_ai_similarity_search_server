@@ -264,6 +264,66 @@ class TestBulkTagging(_TagsBase):
         self.assertEqual(result["removed_from"], 0)
 
 
+class TestClearPartTags(_TagsBase):
+    """Taking every tag off a set of parts, so they can be tagged again."""
+
+    def test_only_the_named_parts_are_cleared(self):
+        core.set_part_tags(self.NAME, ID_A, ["bracket", "v2"])
+        core.set_part_tags(self.NAME, ID_B, ["bracket"])
+        result, _ = core.clear_part_tags(self.NAME, [ID_A])
+        self.assertEqual(result["updated"], 1)
+        entry_a, _ = core.get_part_tags(self.NAME, ID_A)
+        entry_b, _ = core.get_part_tags(self.NAME, ID_B)
+        self.assertEqual(entry_a["tags"], [])
+        self.assertEqual(entry_b["tags"], ["bracket"])
+
+    def test_the_entry_is_dropped_not_left_empty(self):
+        core.set_part_tags(self.NAME, ID_A, ["bracket"])
+        core.clear_part_tags(self.NAME, [ID_A])
+        self.assertEqual(self.read_raw()["parts"], {})
+
+    def test_removed_counts_by_tag_in_listing_order(self):
+        core.set_part_tags(self.NAME, ID_A, ["bracket", "v2"])
+        core.set_part_tags(self.NAME, ID_B, ["bracket", "alpha"])
+        result, _ = core.clear_part_tags(self.NAME, [ID_A, ID_B])
+        self.assertEqual(result["updated"], 2)
+        # Count descending, then tag name ascending -- the order get_index_tags
+        # lists tags in.
+        self.assertEqual(
+            result["removed"],
+            [
+                {"tag": "bracket", "count": 2},
+                {"tag": "alpha", "count": 1},
+                {"tag": "v2", "count": 1},
+            ],
+        )
+
+    def test_unregistered_ids_are_skipped_not_fatal(self):
+        core.set_part_tags(self.NAME, ID_A, ["bracket"])
+        result, _ = core.clear_part_tags(self.NAME, [ID_A, "f" * 64])
+        self.assertEqual(result["updated"], 1)
+        self.assertEqual(
+            result["skipped"], [{"part_id": "f" * 64, "reason": "not_registered"}]
+        )
+
+    def test_an_untagged_part_is_a_no_op(self):
+        result, _ = core.clear_part_tags(self.NAME, [ID_A])
+        self.assertEqual(result["updated"], 0)
+        self.assertEqual(result["removed"], [])
+        self.assertEqual(result["skipped"], [])
+
+    def test_nothing_to_clear_leaves_the_etag_alone(self):
+        core.set_part_tags(self.NAME, ID_A, ["bracket"])
+        _, before = core.get_index_tags(self.NAME)
+        _, after = core.clear_part_tags(self.NAME, [ID_B])
+        self.assertEqual(after, before)
+
+    def test_the_vocabulary_keeps_the_names(self):
+        core.assign_tag(self.NAME, "bracket", [ID_A])
+        core.clear_part_tags(self.NAME, [ID_A])
+        self.assertIn("bracket", tags.get_tag_vocabulary()["tags"])
+
+
 class TestPersistence(_TagsBase):
     """The file on disk, its cache, and how corruption is handled."""
 
@@ -817,6 +877,52 @@ class TestTagEndpoints(_TagsBase):
         resp = self.client.get(self.url(f"/parts/{ID_A}/tags"))
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.json()["tags"], [])
+
+    def test_clearing_part_tags_requires_confirmation(self):
+        self.client.post(self.url("/tags/bracket/parts"), json={"part_ids": [ID_A]})
+        resp = self.client.post(
+            self.url("/parts/tags/clear"), json={"part_ids": [ID_A]}
+        )
+        self.assertEqual(resp.status_code, 409)
+        entry, _ = core.get_part_tags(self.NAME, ID_A)
+        self.assertEqual(entry["tags"], ["bracket"])
+
+    def test_clearing_part_tags_without_ids_is_422(self):
+        resp = self.client.post(
+            self.url("/parts/tags/clear?confirm=true"), json={"part_ids": []}
+        )
+        self.assertEqual(resp.status_code, 422)
+
+    def test_clearing_part_tags_with_a_stale_if_match_is_412(self):
+        stale = self.client.get(self.url("/tags")).headers["ETag"]
+        self.client.put(self.url(f"/parts/{ID_A}/tags"), json={"tags": ["bracket"]})
+        resp = self.client.post(
+            self.url("/parts/tags/clear?confirm=true"),
+            json={"part_ids": [ID_A]},
+            headers={"If-Match": stale},
+        )
+        self.assertEqual(resp.status_code, 412)
+
+    def test_confirmed_clear_reports_what_it_removed(self):
+        self.client.put(
+            self.url(f"/parts/{ID_A}/tags"), json={"tags": ["bracket", "v2"]}
+        )
+        resp = self.client.post(
+            self.url("/parts/tags/clear?confirm=true"),
+            json={"part_ids": [ID_A, "f" * 64]},
+        )
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertEqual(body["updated"], 1)
+        self.assertEqual(
+            body["removed"], [{"tag": "bracket", "count": 1}, {"tag": "v2", "count": 1}]
+        )
+        self.assertEqual(
+            body["skipped"], [{"part_id": "f" * 64, "reason": "not_registered"}]
+        )
+        self.assertTrue(resp.headers["ETag"].startswith('"'))
+        entry, _ = core.get_part_tags(self.NAME, ID_A)
+        self.assertEqual(entry["tags"], [])
 
 
 if __name__ == "__main__":
