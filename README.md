@@ -25,6 +25,18 @@ Because the server speaks plain HTTP, the browser client is not the only one it 
 have. An AI agent can reach the same endpoints through MCP, and so can anything else
 that can send a request.
 
+## See it in action
+
+This README covers setup, configuration and the API. For what the web app does and
+how to use it, start here:
+
+- **Video:** [Walkthrough on YouTube](https://www.youtube.com/watch?v=FsfF-soGAro)
+  — the features in order, from similar-part search to the part catalogue.
+- **Article:** [Clustering 8,000 CAD parts with k-means and Ward ― Making sense of a HOOPS AI Embeddings similarity-search index](https://forum.techsoft3d.com/t/clustering-8-000-cad-parts-with-k-means-and-ward-making-sense-of-a-hoops-ai-embeddings-similarity-search-index/5244)
+  (Tech Soft 3D Forum) — what each feature is for: similar-part search and tagging,
+  the Shape Map and its heat map, k-means, Outliers, Drill in, the Ward tree and the
+  part catalogue.
+
 ## Status: sample / proof of concept
 
 This repository is a **sample and proof of concept**. It exists to show how HOOPS AI
@@ -457,6 +469,9 @@ is already set, so `Xvfb` is not needed — run `main.py` directly instead of
 ---
 
 ## Web client
+
+To see the client in use before building it, watch the video and read the article
+listed under [See it in action](#see-it-in-action).
 
 A reference web client (gallery + 3D viewer) ships with the server. It is a
 demo and a starting point ISVs can adapt. It is built on **HOOPS Visualize Web**,

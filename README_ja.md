@@ -25,6 +25,18 @@ HOOPS AI は Python の機械学習フレームワークであり、それをユ
 エージェントが MCP 経由で同じエンドポイントを叩くこともできますし、リクエストを送れる
 ものであれば何でも構いません。
 
+## 動作の様子を見る
+
+この README はセットアップ、設定、API を説明しています。Web アプリで何ができ、
+どう使うのかは、まず次をご覧ください。
+
+- **動画:** [YouTube のウォークスルー](https://www.youtube.com/watch?v=FsfF-soGAro)
+  — 類似部品検索からパーツカタログまで、機能を順に見せています。
+- **記事:** [Clustering 8,000 CAD parts with k-means and Ward ― Making sense of a HOOPS AI Embeddings similarity-search index](https://forum.techsoft3d.com/t/clustering-8-000-cad-parts-with-k-means-and-ward-making-sense-of-a-hoops-ai-embeddings-similarity-search-index/5244)
+  （Tech Soft 3D Forum）— 各機能が何のためにあるのか（類似部品検索とタグ付け、
+  Shape Map とヒートマップ、k 平均法、Outliers、Drill in、Ward ツリー、パーツカタログ）
+  を説明しています。
+
 ## ステータス: サンプル / 概念実証
 
 このリポジトリは **サンプルであり概念実証（PoC）** です。HOOPS AI の類似検索を、
@@ -455,6 +467,9 @@ python main.py --port 8000
 ---
 
 ## Web クライアント
+
+ビルドする前にクライアントの使われ方を見たい場合は、[動作の様子を見る](#動作の様子を見る)
+に挙げた動画と記事をご覧ください。
 
 リファレンス Web クライアント（ギャラリー + 3D ビューア）がサーバーに同梱されています。
 これはデモであり、ISV が改変できる出発点です。**HOOPS Visualize Web** の上に構築し、
