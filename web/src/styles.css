@@ -1587,10 +1587,44 @@ body {
   flex: 1;
 }
 
-.compare-note {
+/* Part properties, one column per part. A row whose two values differ is
+   marked so the eye lands on it; the colours are the viewport tokens, so the
+   light/dark switch reaches it. */
+.compare-props {
+  width: 100%;
   margin: 10px 0;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.compare-props th,
+.compare-props td {
+  padding: 2px 4px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  border-bottom: 1px solid var(--viewport-border-soft);
+}
+
+.compare-props th {
+  max-width: 90px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  color: var(--viewport-text-soft);
+}
+
+.compare-props th:first-child,
+.compare-props td:first-child {
+  text-align: left;
   color: var(--viewport-text-dim);
-  line-height: 1.4;
+  font-weight: 400;
+}
+
+.compare-props tr.compare-props-differs td {
+  background: var(--viewport-wash);
+  color: var(--viewport-text-active);
+  font-weight: 600;
 }
 
 .compare-toggle-row {
@@ -1598,6 +1632,10 @@ body {
   align-items: center;
   gap: 8px;
   cursor: pointer;
+}
+
+.compare-toggle-row + .compare-toggle-row {
+  margin-top: 6px;
 }
 
 /* Close (X) in the panel corner, and the full-width "Close comparison" button:

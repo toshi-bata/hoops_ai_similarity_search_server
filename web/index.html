@@ -295,21 +295,25 @@
         </div>
 
         <!-- Two-part comparison overlay (demo 1's "Compare two files..."). Shows
-             one big similarity number, the file-to-colour legend, how the two
-             parts were overlaid, and a switch to toggle the coloured difference.
-             No index is involved. -->
+             one big similarity number, the file-to-colour legend, a table of the
+             two parts' properties, a switch to align their centres, and a switch
+             to toggle the coloured difference. No index is involved. -->
         <div id="compare-panel" class="compare-panel" hidden>
           <button id="compare-close-x" type="button" class="compare-close-x"
                   aria-label="Close comparison" title="Close comparison">&times;</button>
           <div class="compare-score-label">Shape similarity</div>
           <div id="compare-score" class="compare-score">&mdash;</div>
           <div id="compare-legend" class="compare-legend-list"></div>
-          <p class="compare-note">
-            The two parts are overlaid by aligning their bounding-box centres
-            (translation only &mdash; no rotation or scaling, so a real size
-            difference stays visible). Use the checkboxes to show or hide the
-            base and added parts.
-          </p>
+          <table id="compare-props" class="compare-props" aria-label="Part properties">
+            <thead>
+              <tr><th scope="col"></th><th scope="col" id="compare-props-a"></th><th scope="col" id="compare-props-b"></th></tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+          <label class="compare-toggle-row">
+            <input id="compare-align" type="checkbox" checked />
+            Align centres
+          </label>
           <label class="compare-toggle-row">
             <input id="compare-toggle" type="checkbox" checked />
             Show differences

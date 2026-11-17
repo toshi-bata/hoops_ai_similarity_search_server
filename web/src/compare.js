@@ -30,6 +30,10 @@ export function initCompare({ onStart, onClose, getIndexName } = {}) {
   const scoreEl = document.getElementById('compare-score');
   const legendEl = document.getElementById('compare-legend');
   const toggle = document.getElementById('compare-toggle');
+  const alignToggle = document.getElementById('compare-align');
+  const propsBody = document.querySelector('#compare-props tbody');
+  const headA = document.getElementById('compare-props-a');
+  const headB = document.getElementById('compare-props-b');
   const closeX = document.getElementById('compare-close-x');
   const closeBtn = document.getElementById('compare-close');
 
@@ -44,6 +48,118 @@ export function initCompare({ onStart, onClose, getIndexName } = {}) {
   toggle.addEventListener('change', () => {
     if (controller) controller.setEnabled(toggle.checked);
   });
+
+  alignToggle.addEventListener('change', () => {
+    if (controller) controller.setAligned(alignToggle.checked);
+  });
+
+  // -- Properties table ------------------------------------------------------
+  //
+  // One row per figure, one column per part. The cells are filled as each
+  // figure arrives (see fillProps), so a slow or missing one never holds back
+  // the rest. A figure that cannot be read shows a dash and says why in its
+  // tooltip; the table itself is always drawn.
+  const REL_TOLERANCE = 1e-6;
+  const CENTRE_TOLERANCE = 1e-6;
+  const UNAVAILABLE = 'Not available in this SCS';
+
+  const PROP_ROWS = [
+    { key: 'faces', label: 'Faces', format: formatCount, same: (a, b) => a === b },
+    { key: 'edges', label: 'Edges', format: formatCount, same: (a, b) => a === b },
+    { key: 'area', label: 'Surface area', format: formatQuantity, same: sameQuantity },
+    { key: 'volume', label: 'Volume', format: formatQuantity, same: sameQuantity },
+    { key: 'centre', label: 'Bounding-box centre', format: formatCentre, same: sameCentre },
+  ];
+
+  function formatCount(n) {
+    return String(n);
+  }
+
+  // About seven significant digits, with the unit when the SCS gave one.
+  function formatQuantity(q) {
+    const digits = String(Number(q.value.toPrecision(7)));
+    return q.unit ? `${digits} ${q.unit}` : digits;
+  }
+
+  function formatCentre(c) {
+    return `${c.x.toFixed(3)}, ${c.y.toFixed(3)}, ${c.z.toFixed(3)}`;
+  }
+
+  // Relative difference under 1e-6 counts as equal; two zeros are equal.
+  function sameQuantity(a, b) {
+    const scale = Math.max(Math.abs(a.value), Math.abs(b.value));
+    return scale === 0 || Math.abs(a.value - b.value) / scale < REL_TOLERANCE;
+  }
+
+  function sameCentre(a, b) {
+    return (
+      Math.abs(a.x - b.x) < CENTRE_TOLERANCE
+      && Math.abs(a.y - b.y) < CENTRE_TOLERANCE
+      && Math.abs(a.z - b.z) < CENTRE_TOLERANCE
+    );
+  }
+
+  // The scene whose figures the table is waiting for. A figure that arrives
+  // after the comparison was replaced or closed must not be written into the
+  // next one's table.
+  let propsToken = 0;
+
+  function renderPropsSkeleton(nameA, nameB) {
+    headA.textContent = nameA;
+    headA.title = nameA;
+    headB.textContent = nameB;
+    headB.title = nameB;
+    propsBody.innerHTML = '';
+    const rows = {};
+    for (const spec of PROP_ROWS) {
+      const tr = document.createElement('tr');
+      const label = document.createElement('td');
+      label.textContent = spec.label;
+      const cellA = document.createElement('td');
+      const cellB = document.createElement('td');
+      cellA.textContent = '\u2026';
+      cellB.textContent = '\u2026';
+      tr.append(label, cellA, cellB);
+      propsBody.appendChild(tr);
+      rows[spec.key] = { spec, tr, cells: [cellA, cellB], values: [undefined, undefined] };
+    }
+    return rows;
+  }
+
+  function setProp(row, index, value) {
+    const cell = row.cells[index];
+    row.values[index] = value;
+    if (value === null || value === undefined) {
+      cell.textContent = '\u2014';
+      cell.title = UNAVAILABLE;
+    } else {
+      cell.textContent = row.spec.format(value);
+      cell.title = '';
+    }
+    const [a, b] = row.values;
+    const both = a !== null && a !== undefined && b !== null && b !== undefined;
+    row.tr.classList.toggle('compare-props-differs', both && !row.spec.same(a, b));
+  }
+
+  // Read both parts' figures and put each in its cell as it resolves. Not
+  // awaited by the caller: the parts are already on screen and the comparison
+  // already running by the time this starts.
+  function fillProps(ctrl, nameA, nameB) {
+    const token = ++propsToken;
+    const rows = renderPropsSkeleton(nameA, nameB);
+    ['a', 'b'].forEach((which, index) => {
+      const figures = ctrl.readProperties(which);
+      if (!figures) return;
+      setProp(rows.centre, index, figures.centre);
+      for (const key of ['faces', 'edges', 'area', 'volume']) {
+        figures[key]
+          .catch(() => null)
+          .then((value) => {
+            if (token === propsToken) setProp(rows[key], index, value);
+          });
+      }
+    });
+  }
 
   if (closeX) closeX.addEventListener('click', () => close());
   if (closeBtn) closeBtn.addEventListener('click', () => close());
@@ -136,7 +252,9 @@ export function initCompare({ onStart, onClose, getIndexName } = {}) {
       baseScs = scsA;
       renderPanel(score, a.filename, b.filename);
       toggle.checked = true;
+      alignToggle.checked = true;
       panel.hidden = false;
+      fillProps(controller, a.filename, b.filename);
     } catch (err) {
       showError(err);
       hide();
@@ -150,6 +268,7 @@ export function initCompare({ onStart, onClose, getIndexName } = {}) {
     panel.hidden = true;
     controller = null;
     baseScs = null;
+    propsToken += 1;
   }
 
   // End the comparison the user is looking at: drop the added part (B) and

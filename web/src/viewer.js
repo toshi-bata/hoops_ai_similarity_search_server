@@ -32,6 +32,7 @@ import {
   SelectionMode,
   OperatorId,
   LoadSubtreeConfig,
+  NodeType,
 } from '@ts3d-hoops/web-viewer';
 import * as Communicator from '@ts3d-hoops/web-viewer';
 import { ENGINE_PATH } from './config.js';
@@ -312,6 +313,48 @@ function waitForSceneReady(hwv) {
   });
 }
 
+// The body nodes (instanced meshes/bodies) under `nodeId`. Face and edge counts
+// are defined on these, not on the assembly/part-instance nodes above them.
+function collectBodyNodes(model, nodeId, out = []) {
+  if (model.getNodeType(nodeId) === NodeType.BodyInstance) {
+    out.push(nodeId);
+    return out;
+  }
+  for (const child of model.getNodeChildren(nodeId) || []) {
+    collectBodyNodes(model, child, out);
+  }
+  return out;
+}
+
+// Sum a per-body count (getFaceCount / getEdgeCount) over every body under the
+// container node. Resolves to null when the container holds no body at all.
+async function sumOverBodies(model, containerId, count) {
+  const bodies = collectBodyNodes(model, containerId);
+  if (!bodies.length) return null;
+  const counts = await Promise.all(bodies.map((id) => count.call(model, id)));
+  return counts.reduce((total, n) => total + n, 0);
+}
+
+// Lower-case a property name and drop everything that is not a letter or digit,
+// so "Surface Area", "surface_area" and "SurfaceArea" all compare equal.
+function normaliseKey(key) {
+  return String(key).toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+// Read one physical property out of a getNodeProperties() map. The key names
+// depend on the SCS, so the lookup matches on the normalised name instead of a
+// fixed string. Resolves to { value, unit } or null when no key matches or its
+// value does not start with a number. `wanted` is a normalised key fragment.
+function readPhysicalProperty(map, wanted) {
+  if (!map) return null;
+  for (const key of Object.keys(map)) {
+    if (!normaliseKey(key).includes(wanted)) continue;
+    const m = /^\s*([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?)\s*(.*)$/.exec(String(map[key]));
+    if (m) return { value: Number(m[1]), unit: m[2].trim() };
+  }
+  return null;
+}
+
 // Show two parts in one scene and run the HOOPS Web Viewer shape comparison
 // (View.startComparison): the regions unique to each part and the shared region
 // are painted in three colours (see COMPARE_LEGEND). This is demo 1's "Compare
@@ -324,8 +367,10 @@ function waitForSceneReady(hwv) {
 // erase a genuine size difference, which the comparison is meant to reveal.
 //
 // Returns a promise that resolves, once the comparison is on screen, to a small
-// controller ``{ setEnabled(on) }`` the caller drives from the "Show
-// differences" switch; it rejects (after showing the cause) if either part
+// controller the caller drives from the panel: ``setEnabled(on)`` for the "Show
+// differences" switch, ``setAligned(on)`` for "Align centres" (off leaves the
+// second part where its file puts it), ``setPartVisible`` and ``readProperties``
+// (the figures behind the properties table). It rejects (after showing the cause) if either part
 // fails to load.
 export function showComparison({ scsA, scsB }) {
   const host = document.getElementById('viewer-host');
@@ -418,6 +463,10 @@ export function showComparison({ scsA, scsB }) {
         );
         await model.setNodeMatrix(nodeB, shift);
         await view.fitWorld();
+        // "Align centres" is on until the user says otherwise; setAligned()
+        // calls are serialised so a quick double click cannot interleave.
+        let aligned = true;
+        let alignQueue = Promise.resolve();
         // Reveal both parts BEFORE startComparison. The alignment is now applied,
         // so the first drawn frame already shows the parts overlapped, and
         // startComparison's 3-colour output (only1 / only2 / same) is defined on
@@ -441,6 +490,61 @@ export function showComparison({ scsA, scsB }) {
               v.endComparison();
               comparisonActive = false;
             }
+          },
+          // Move the second part onto the first's centre (on) or back to the
+          // position its file gives it (off). The comparison colours are
+          // computed from the geometry's placement, so an active comparison is
+          // ended first and restarted afterwards.
+          setAligned(on) {
+            const want = !!on;
+            alignQueue = alignQueue.then(async () => {
+              if (!currentViewer || !currentViewer.viewer || want === aligned) return;
+              const v = currentViewer.viewer.view;
+              const m = currentViewer.viewer.model;
+              const wasComparing = comparisonActive;
+              if (wasComparing) {
+                v.endComparison();
+                comparisonActive = false;
+              }
+              await m.setNodeMatrix(nodeB, want ? shift : new Matrix());
+              aligned = want;
+              await v.fitWorld();
+              if (wasComparing) {
+                v.startComparison(setA, setB, config);
+                comparisonActive = true;
+              }
+            }).catch(() => {});
+            return alignQueue;
+          },
+          // The figures behind the properties table, measured per part ('a' or
+          // 'b'). Every entry is a promise that resolves to null when the value
+          // cannot be read, so one missing figure never blocks the others. The
+          // centre is the bounding-box centre measured BEFORE the alignment
+          // shift, i.e. where the file puts the part.
+          readProperties(which) {
+            const container = which === 'a' ? nodeA : nodeB;
+            const loaded = which === 'a' ? rootsA : rootsB;
+            const centre = (which === 'a' ? ca : cb);
+            const m = currentViewer && currentViewer.viewer ? currentViewer.viewer.model : null;
+            if (!m) return null;
+            // Physical properties are computed from children, on the container
+            // first and then on each root the SCS loaded under it.
+            const physical = (async () => {
+              for (const id of [container, ...loaded]) {
+                const props = await m.getNodeProperties(id, true).catch(() => null);
+                const area = readPhysicalProperty(props, 'surfacearea');
+                const volume = readPhysicalProperty(props, 'volume');
+                if (area || volume) return { area, volume };
+              }
+              return { area: null, volume: null };
+            })().catch(() => ({ area: null, volume: null }));
+            return {
+              faces: sumOverBodies(m, container, m.getFaceCount).catch(() => null),
+              edges: sumOverBodies(m, container, m.getEdgeCount).catch(() => null),
+              area: physical.then((p) => p.area),
+              volume: physical.then((p) => p.volume),
+              centre: { x: centre.x, y: centre.y, z: centre.z },
+            };
           },
           // Show or hide one of the two parts (`which` is 'a' or 'b'), so the
           // base and the added part can be inspected alone or overlaid. Toggling
