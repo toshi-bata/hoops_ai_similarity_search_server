@@ -1622,6 +1622,15 @@ Web クライアントの Shape Map は、ウォーム済みのクラスタリ�
 
 ---
 
+## MCP サーバー
+
+`mcp_server/` は、独立した軽量な MCP サーバー（FastMCP + httpx、uv で管理）です。
+Claude Desktop から、このサーバーの API を通じて部品の比較、インデックスの検索とタグ付け、
+ファイルの登録ができ、このサーバーが起動していなければ起動します。
+詳しくは [mcp_server/README_ja.md](mcp_server/README_ja.md) を参照してください。
+
+---
+
 ## ライセンス
 
 このリポジトリ内の code は MIT License の下で公開されています。全文は [`LICENSE`](LICENSE) を参照してください。

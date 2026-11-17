@@ -108,3 +108,8 @@ poc_tag_metadata.py
 # and is what the READMEs show; a public sample has no use for the original,
 # which is only more binary to carry.
 /images/*.pptx
+# MCP server runtime output (per-machine logs, the PID record and generated STEP copies).
+/mcp_server/logs/
+/mcp_server/.state/
+/mcp_server/work/
+/mcp_server/.venv/

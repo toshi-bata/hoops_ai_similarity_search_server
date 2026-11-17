@@ -1630,6 +1630,15 @@ corrupt index) is logged and skipped without taking the server down. Legacy
 
 ---
 
+## MCP server
+
+`mcp_server/` is a separate, light MCP server (FastMCP + httpx, managed with
+uv) that lets Claude Desktop compare parts, search and tag an index and register
+files through this server's API, and starts this server when it is not running.
+See [mcp_server/README.md](mcp_server/README.md).
+
+---
+
 ## License
 
 The code in this repository is released under the MIT License; see
