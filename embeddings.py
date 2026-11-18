@@ -391,6 +391,28 @@ def ckpt_sha256(path: pathlib.Path) -> str:
     return digest
 
 
+_hoops_ai_version_cache: Optional[str] = None
+
+
+def hoops_ai_sdk_version() -> str:
+    """Return ``hoops_ai.__version__``, cached per process; ``"unknown"`` on any failure.
+
+    The same checkpoint produces different vectors under a different SDK
+    version, so records are stamped with this alongside the checkpoint digest.
+    """
+    global _hoops_ai_version_cache
+    if _hoops_ai_version_cache is not None:
+        return _hoops_ai_version_cache
+    try:
+        import hoops_ai
+
+        version = str(getattr(hoops_ai, "__version__", "") or "") or "unknown"
+    except Exception:
+        return "unknown"
+    _hoops_ai_version_cache = version
+    return version
+
+
 def get_embedder():
     """Lazy-initialise HOOPSEmbeddings without loading a FAISS index.
 

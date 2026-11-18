@@ -88,6 +88,7 @@ from storage import map_persistent_CAD_files
 from embeddings import (
     _l2_normalize,
     ckpt_sha256,
+    hoops_ai_sdk_version,
     resolve_checkpoint_path,
     intraop_threads,
     intraop_thread_limit,
@@ -1021,6 +1022,7 @@ def _embed_bodies_for_index(
         logger.warning(
             "Could not hash embedding checkpoint for index '%s': %s", index_name, exc
         )
+    sdk_version = hoops_ai_sdk_version()
 
     errors: list[dict[str, Any]] = []
 
@@ -1286,6 +1288,7 @@ def _embed_bodies_for_index(
             }
             if ckpt_sha:
                 base_meta["_ckpt_sha256"] = ckpt_sha
+            base_meta["_hoops_ai_version"] = sdk_version
             if fid in thumbnail_rel:
                 base_meta["thumbnail"] = thumbnail_rel[fid]
             if fid in scs_rel:
@@ -1322,6 +1325,53 @@ def _embed_bodies_for_index(
         shutil.rmtree(tmp_images, ignore_errors=True)
 
     return records, errors
+
+
+def _warn_on_model_mix(name: str, vs: Any) -> None:
+    """Log a warning when adding now would mix models in the index.
+
+    The model identity is the pair (checkpoint digest, HOOPS AI version). The
+    digest is process-cached, so hashing here is paid once and reused by the
+    embed pass; this is a write path, so it never violates the "hash only while
+    writing an index" invariant. Never raises.
+    """
+    try:
+        incoming = ckpt_sha256(resolve_checkpoint_path())
+        incoming_sdk = hoops_ai_sdk_version()
+        existing_digests: set[str] = set()
+        existing_sdks: set[str] = set()
+        for m in vs.iter_metadata():
+            if not isinstance(m, dict):
+                continue
+            if m.get("_ckpt_sha256"):
+                existing_digests.add(m["_ckpt_sha256"])
+            # Records without the key predate version stamping: unknown, which
+            # alone is never a reason to warn.
+            if m.get("_hoops_ai_version"):
+                existing_sdks.add(str(m["_hoops_ai_version"]))
+        stale = existing_digests - {incoming}
+        if stale:
+            logger.warning(
+                "[MODEL] Index '%s' already holds vectors from %d other "
+                "checkpoint(s) (%s); the current checkpoint is %s. Mixing "
+                "checkpoints in one index makes similarity scores unreliable.",
+                name, len(stale),
+                ", ".join(sorted(str(s)[:12] for s in stale)), incoming[:12],
+            )
+        stale_sdk = existing_sdks - {incoming_sdk}
+        if stale_sdk:
+            logger.warning(
+                "[MODEL] Index '%s' already holds vectors from other HOOPS AI "
+                "version(s) (%s); the current HOOPS AI version is %s. The same "
+                "checkpoint gives different vectors under a different SDK "
+                "version, so scores are unreliable; rebuild the index after "
+                "upgrading the SDK.",
+                name, ", ".join(sorted(stale_sdk)), incoming_sdk,
+            )
+    except Exception as exc:
+        logger.warning(
+            "Could not check checkpoint consistency for index '%s': %s", name, exc
+        )
 
 
 def add_to_index(
@@ -1368,26 +1418,7 @@ def add_to_index(
         # process-cached, so hashing here is paid once and reused by the embed
         # pass below; this is a write path, so it never violates the "hash only
         # while writing an index" invariant.
-        try:
-            incoming = ckpt_sha256(resolve_checkpoint_path())
-            existing_digests = {
-                m.get("_ckpt_sha256")
-                for m in vs.iter_metadata()
-                if isinstance(m, dict) and m.get("_ckpt_sha256")
-            }
-            stale = existing_digests - {incoming}
-            if stale:
-                logger.warning(
-                    "[MODEL] Index '%s' already holds vectors from %d other "
-                    "checkpoint(s) (%s); the current checkpoint is %s. Mixing "
-                    "checkpoints in one index makes similarity scores unreliable.",
-                    name, len(stale),
-                    ", ".join(sorted(str(s)[:12] for s in stale)), incoming[:12],
-                )
-        except Exception as exc:
-            logger.warning(
-                "Could not check checkpoint consistency for index '%s': %s", name, exc
-            )
+        _warn_on_model_mix(name, vs)
 
         records, errors = _embed_bodies_for_index(
             file_ids,
@@ -1648,6 +1679,13 @@ def check_index_model_consistency(name: str) -> dict[str, Any]:
       * ``"mismatch"``         -- none match, or none carry a digest at all; the
         search results cannot be trusted.
 
+    The same walk also reports the HOOPS AI version (``_hoops_ai_version``):
+    ``current_hoops_ai_version``, ``sdk_matching_files``,
+    ``sdk_mismatching_files``, ``sdk_unknown_files`` (records stamped before the
+    version was recorded) and ``sdk_status`` (``match`` / ``partial_mismatch`` /
+    ``mismatch``, or ``unknown`` when no file carries a version). ``status``
+    stays a verdict on the checkpoint alone.
+
     Raises ``KeyError`` when the index does not exist.
     """
     _validate_index_name(name)
@@ -1656,14 +1694,28 @@ def check_index_model_consistency(name: str) -> dict[str, Any]:
     with lock:
         vs = _load_named_index(name)
         digest_by_fid: dict[str, Optional[str]] = {}
+        sdk_by_fid: dict[str, Optional[str]] = {}
         for meta in vs.iter_metadata():
             if not isinstance(meta, dict):
                 continue
             fid = meta.get("file_id")
             if fid and fid not in digest_by_fid:
                 digest_by_fid[str(fid)] = meta.get("_ckpt_sha256")
+                sdk_by_fid[str(fid)] = meta.get("_hoops_ai_version")
 
+    current_sdk = hoops_ai_sdk_version()
     total = len(digest_by_fid)
+    sdk_matching = sum(1 for v in sdk_by_fid.values() if v and v == current_sdk)
+    sdk_unknown = sum(1 for v in sdk_by_fid.values() if not v)
+    sdk_mismatching = total - sdk_matching - sdk_unknown
+    if total == 0 or sdk_unknown == total:
+        sdk_status = "unknown"
+    elif sdk_matching == total:
+        sdk_status = "match"
+    elif sdk_matching > 0:
+        sdk_status = "partial_mismatch"
+    else:
+        sdk_status = "mismatch"
     matching = sum(1 for d in digest_by_fid.values() if d == current)
     unknown = sum(1 for d in digest_by_fid.values() if not d)
     mismatching = total - matching - unknown
@@ -1683,6 +1735,11 @@ def check_index_model_consistency(name: str) -> dict[str, Any]:
         "mismatching_files": mismatching,
         "unknown_files": unknown,
         "status": status,
+        "current_hoops_ai_version": current_sdk,
+        "sdk_matching_files": sdk_matching,
+        "sdk_mismatching_files": sdk_mismatching,
+        "sdk_unknown_files": sdk_unknown,
+        "sdk_status": sdk_status,
     }
 
 

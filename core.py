@@ -155,6 +155,7 @@ from embeddings import (
     resolve_checkpoint_path,
     ckpt_sha256,
     _ckpt_sha256_cache,
+    hoops_ai_sdk_version,
     _INTRAOP_ENV_VARS,
     _INTRAOP_THREADS_DEFAULT,
     intraop_threads,

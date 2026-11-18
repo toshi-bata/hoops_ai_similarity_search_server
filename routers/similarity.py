@@ -687,6 +687,11 @@ class IndexModelConsistencyResponse(BaseModel):
     mismatching_files: int
     unknown_files: int
     status: str
+    current_hoops_ai_version: str
+    sdk_matching_files: int
+    sdk_mismatching_files: int
+    sdk_unknown_files: int
+    sdk_status: str
 
 
 class IndexPartItem(BaseModel):

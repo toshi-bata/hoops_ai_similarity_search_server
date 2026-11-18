@@ -64,7 +64,7 @@ uv sync
 | | `embed_part(path, include_vector)` | `POST /files/upload-from-path`、`POST /similarity/embed` |
 | | `make_transformed_copy(path, translate, rotate_deg, axis)` | なし（ローカルのファイル） |
 | | `translation_stability(path, shifts, rotations_deg, timeout)` | `compare_parts` と同じ |
-| 検索 | `list_indexes`、`index_stats(index)` | `GET /similarity/index/list`、`GET /similarity/index/{name}/stats` |
+| 検索 | `list_indexes`、`index_stats(index)`、`model_consistency(index)` | `GET /similarity/index/list`、`GET /similarity/index/{name}/stats`、`GET /similarity/index/{name}/model-consistency` |
 | | `search_similar(index, path または part_id, k, mode)` | `POST /similarity/index/{name}/search` または `/search-assembly` |
 | | `list_parts`、`get_part`、`get_part_thumbnail` | `GET /similarity/index/{name}/parts`、`.../parts/{id}/thumbnail` |
 | タグ | `list_tags`、`parts_by_tag` | `GET .../tags`、`GET .../parts?tags=` |

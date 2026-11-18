@@ -535,6 +535,32 @@ def index_stats(index: str) -> dict:
 
 
 @mcp.tool()
+def model_consistency(index: str) -> dict:
+    """Check whether an index was built with the current checkpoint and HOOPS AI version.
+
+    The first call after the server starts hashes the checkpoint and can be slow.
+    """
+    try:
+        d = api("GET", f"{_ix(index)}/model-consistency", timeout=120)
+    except SimError as exc:
+        return {"error": str(exc)}
+    return {
+        "index": index,
+        "status": d.get("status"),
+        "sdk_status": d.get("sdk_status"),
+        "current_ckpt_sha256": str(d.get("current_ckpt_sha256") or "")[:12],
+        "current_hoops_ai_version": d.get("current_hoops_ai_version"),
+        "total_files": d.get("total_files"),
+        "matching_files": d.get("matching_files"),
+        "mismatching_files": d.get("mismatching_files"),
+        "unknown_files": d.get("unknown_files"),
+        "sdk_matching_files": d.get("sdk_matching_files"),
+        "sdk_mismatching_files": d.get("sdk_mismatching_files"),
+        "sdk_unknown_files": d.get("sdk_unknown_files"),
+    }
+
+
+@mcp.tool()
 def search_similar(index: str, path: Optional[str] = None, part_id: Optional[str] = None,
                    k: int = 20, mode: str = "part") -> dict:
     """Find parts (mode "part") or assemblies (mode "assembly") similar to a query.

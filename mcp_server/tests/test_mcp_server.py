@@ -191,3 +191,26 @@ def test_http_error_is_summarised(srv):
     srv._transport = _transport(handler)
     out = srv.index_stats("nope")
     assert "HTTP 404" in out["error"] and "not found" in out["error"]
+
+
+def test_model_consistency_trims_checkpoint_and_reports_sdk(srv):
+    body = {
+        "name": "idx", "current_ckpt_sha256": "a" * 64, "total_files": 3,
+        "matching_files": 3, "mismatching_files": 0, "unknown_files": 0,
+        "status": "match", "current_hoops_ai_version": "1.2.0",
+        "sdk_matching_files": 1, "sdk_mismatching_files": 1,
+        "sdk_unknown_files": 1, "sdk_status": "partial_mismatch",
+    }
+
+    def handler(request):
+        if request.url.path == "/similarity/index/list":
+            return httpx.Response(200, json=[])
+        assert request.url.path == "/similarity/index/idx/model-consistency"
+        return httpx.Response(200, json=body)
+
+    srv._transport = _transport(handler)
+    out = srv.model_consistency("idx")
+    assert out["current_ckpt_sha256"] == "a" * 12
+    assert out["status"] == "match" and out["sdk_status"] == "partial_mismatch"
+    assert out["current_hoops_ai_version"] == "1.2.0"
+    assert out["sdk_mismatching_files"] == 1 and out["sdk_unknown_files"] == 1

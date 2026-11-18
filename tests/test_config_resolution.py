@@ -398,6 +398,79 @@ class IndexModelConsistency(unittest.TestCase):
         self.assertEqual(out["matching_files"], 0)
 
 
+class IndexSdkVersionConsistency(unittest.TestCase):
+    """HOOPS AI version stamping, the sdk_* keys and the add-time warning."""
+
+    def _vs(self, versions, ckpt="CURRENT"):
+        from types import SimpleNamespace
+
+        metas = []
+        for i, v in enumerate(versions):
+            m = {"file_id": f"{i:064d}", "kind": "part", "_ckpt_sha256": ckpt}
+            if v is not None:
+                m["_hoops_ai_version"] = v
+            metas.append(m)
+        return SimpleNamespace(iter_metadata=lambda: iter(metas))
+
+    def _consistency(self, versions, current="1.2.0"):
+        with patch.object(index_registry, "resolve_checkpoint_path",
+                          return_value=pathlib.Path("x.ckpt")), \
+             patch.object(index_registry, "ckpt_sha256", return_value="CURRENT"), \
+             patch.object(index_registry, "hoops_ai_sdk_version", return_value=current), \
+             patch.object(index_registry, "_load_named_index",
+                          return_value=self._vs(versions)):
+            return core.check_index_model_consistency("demo")
+
+    def test_sdk_status_four_ways(self):
+        out = self._consistency(["1.2.0", "1.2.0"])
+        self.assertEqual(out["sdk_status"], "match")
+        self.assertEqual(out["current_hoops_ai_version"], "1.2.0")
+        self.assertEqual(out["sdk_matching_files"], 2)
+        out = self._consistency(["1.2.0", "1.1.1", None])
+        self.assertEqual(out["sdk_status"], "partial_mismatch")
+        self.assertEqual(
+            (out["sdk_matching_files"], out["sdk_mismatching_files"],
+             out["sdk_unknown_files"]), (1, 1, 1))
+        out = self._consistency(["1.1.1", None])
+        self.assertEqual(out["sdk_status"], "mismatch")
+        out = self._consistency([None, None])
+        self.assertEqual(out["sdk_status"], "unknown")
+        self.assertEqual(out["sdk_unknown_files"], 2)
+        # status stays a checkpoint-only verdict
+        self.assertEqual(out["status"], "match")
+
+    def _warnings(self, versions, current="1.2.0"):
+        with patch.object(index_registry, "resolve_checkpoint_path",
+                          return_value=pathlib.Path("x.ckpt")), \
+             patch.object(index_registry, "ckpt_sha256", return_value="CURRENT"), \
+             patch.object(index_registry, "hoops_ai_sdk_version", return_value=current), \
+             self.assertLogs(index_registry.logger, level="WARNING") as cm:
+            index_registry.logger.warning("sentinel")
+            index_registry._warn_on_model_mix("demo", self._vs(versions))
+        return [r for r in cm.output if "sentinel" not in r]
+
+    def test_version_only_difference_warns(self):
+        out = self._warnings(["1.1.1"])
+        self.assertEqual(len(out), 1)
+        self.assertIn("1.1.1", out[0])
+        self.assertIn("1.2.0", out[0])
+
+    def test_unknown_version_records_alone_do_not_warn(self):
+        self.assertEqual(self._warnings([None, None]), [])
+        self.assertEqual(self._warnings(["1.2.0", None]), [])
+
+    def test_version_helper_caches_and_never_raises(self):
+        import sys
+        from types import SimpleNamespace
+
+        with patch.object(embeddings, "_hoops_ai_version_cache", None), \
+             patch.dict(sys.modules, {"hoops_ai": SimpleNamespace(__version__="9.9")}):
+            self.assertEqual(core.hoops_ai_sdk_version(), "9.9")
+        with patch.object(embeddings, "_hoops_ai_version_cache", None), \
+             patch.dict(sys.modules, {"hoops_ai": None}):
+            self.assertEqual(core.hoops_ai_sdk_version(), "unknown")
+
+
 class CheckpointIdentityRecording(unittest.TestCase):
     """Model identity is recorded (record-only) without changing responses."""
 

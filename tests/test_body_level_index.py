@@ -16,7 +16,7 @@ import sys
 import tempfile
 import unittest
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -567,6 +567,16 @@ class TestEmbedBodiesOrdering(unittest.TestCase):
         file0 = [r for r in records if r.id == self.fids[0]]
         firsts = [float(np.asarray(r.embedding.values)[0]) for r in file0]
         self.assertEqual(firsts, sorted(firsts))
+
+    def test_records_carry_the_hoops_ai_version(self):
+        self._install_embedder([(self.fids[0], 2), (self.fids[1], 1)])
+        with patch.object(index_registry, "hoops_ai_sdk_version", return_value="9.9.9"):
+            records, _ = index_registry._embed_bodies_for_index(
+                [self.fids[0], self.fids[1]], "idx"
+            )
+        self.assertTrue(records)
+        for r in records:
+            self.assertEqual(r.metadata["_hoops_ai_version"], "9.9.9")
 
 
 if __name__ == "__main__":
