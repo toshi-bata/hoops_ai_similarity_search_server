@@ -72,7 +72,8 @@ class TestEmbeddingPlanEndpoint(unittest.TestCase):
             with patch.dict(os.environ, env, clear=True), \
                     patch.object(
                         index_registry, "_physical_core_cap", return_value=(12, True)
-                    ):
+                    ), \
+                    patch.object(index_registry.os, "cpu_count", return_value=12):
                 body = _client().get(
                     "/similarity/embedding-plan", params={"file_count": 5000}
                 ).json()
@@ -157,7 +158,8 @@ class TestPlanningBeforeAnythingIsSelected(unittest.TestCase):
         with patch.dict(os.environ, env, clear=True), \
                 patch.object(
                     index_registry, "_physical_core_cap", return_value=(12, True)
-                ):
+                ), \
+                patch.object(index_registry.os, "cpu_count", return_value=12):
             unknown = index_registry._size_workers(None)
             one_file = index_registry._size_workers(1)
         self.assertEqual(one_file["workers"], 1)
@@ -251,22 +253,72 @@ def _report_header(timings):
     return ""
 
 
-class TestTheRetryBudgetIsFourGigabytesPerWorker(unittest.TestCase):
+class TestSizingRule(unittest.TestCase):
+    """workers = min(logical processors, (free - 10% of total) / footprint, files)."""
+
+    GIB = 1024 ** 3
+
+    def _size(self, logical, free_gib, total_gib, files=1000, env=None,
+              intraop=1, physical=8, factor=1):
+        from types import SimpleNamespace
+
+        mem = SimpleNamespace(available=int(free_gib * self.GIB),
+                              total=int(total_gib * self.GIB))
+        fake_psutil = SimpleNamespace(virtual_memory=lambda: mem)
+        with patch.dict(os.environ, dict(ENV, **(env or {})), clear=True), \
+                patch.dict(sys.modules, {"psutil": fake_psutil}), \
+                patch.object(index_registry.os, "cpu_count", return_value=logical), \
+                patch.object(index_registry, "intraop_threads", return_value=intraop), \
+                patch.object(index_registry, "_physical_core_cap",
+                             return_value=(physical, True)):
+            return index_registry._size_workers(files, footprint_factor=factor)
+
+    def test_ram_bound_on_a_logical_20_host(self):
+        # (16 - 3.2) / 0.75 = 17.07
+        out = self._size(20, 16, 32)
+        self.assertEqual(out["workers"], 17)
+        self.assertEqual(out["cores_kind"], "logical")
+        self.assertEqual(out["cores"], 20)
+        self.assertIsNone(out["cap"])
+
+    def test_logical_processors_bound_with_plenty_of_memory(self):
+        self.assertEqual(self._size(32, 200, 256)["workers"], 32)
+
+    def test_max_workers_is_a_cap_only_when_set(self):
+        out = self._size(32, 200, 256, env={"HOOPS_AI_MAX_WORKERS": "12"})
+        self.assertEqual(out["workers"], 12)
+        self.assertEqual(out["cap"], 12)
+
+    def test_intraop_off_falls_back_to_physical_cores(self):
+        out = self._size(32, 200, 256, intraop=0, physical=16)
+        self.assertEqual(out["workers"], 16)
+        self.assertEqual(out["cores_kind"], "physical")
+
+    def test_file_count_bounds_the_pool(self):
+        self.assertEqual(self._size(32, 200, 256, files=5)["workers"], 5)
+
+    def test_heavy_retry_uses_768_times_4(self):
+        # (16 - 3.2) / 3.0 = 4.27
+        out = self._size(20, 16, 32, factor=index_registry._HEAVY_FOOTPRINT_FACTOR)
+        self.assertEqual(out["workers"], 4)
+        self.assertEqual(out["model_mb"], 3072)
+
+
+class TestTheRetryBudgetIsThreeGigabytesPerWorker(unittest.TestCase):
     """The two constants are one decision and must move together.
 
     ``_HEAVY_FOOTPRINT_FACTOR`` is documented as a multiple of
     ``_MODEL_FOOTPRINT_MB_DEFAULT``, so what it actually fixes is the product:
-    the per-worker budget the retry pass sizes against. That budget is 4 GB,
-    the figure hoops_ai_qt_sandbox's second pass uses. Halving the base without
-    doubling the factor would quietly make it 2 GB and leave the comment
-    saying otherwise, so the product is asserted rather than either number.
+    the per-worker budget the retry pass sizes against (768 x 4 = 3 GB).
+    Changing the base without the factor would quietly move it, so the product
+    is asserted rather than either number.
     """
 
-    def test_the_product_of_the_two_constants_is_4096_mb(self):
+    def test_the_product_of_the_two_constants_is_3072_mb(self):
         self.assertEqual(
             index_registry._MODEL_FOOTPRINT_MB_DEFAULT
             * index_registry._HEAVY_FOOTPRINT_FACTOR,
-            4096,
+            3072,
         )
 
     def test_a_heavy_worker_is_budgeted_more_than_a_light_one(self):

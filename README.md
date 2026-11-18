@@ -858,7 +858,7 @@ curl -X POST "$base/similarity/index/$index/search?top_k=10" -F "file=@/cad/part
 ```
 
 `workers` and `time_limit` are optional — omit them to size workers
-automatically (capped by `HOOPS_AI_MAX_WORKERS`) and use the default per-file
+automatically (capped by `HOOPS_AI_MAX_WORKERS` only when it is set) and use the default per-file
 budget. See *Bulk registration jobs* below for every option. Note the PowerShell
 JSON-via-file idiom above: it avoids two Windows pitfalls (PowerShell stripping
 quotes from inline `-d` JSON, and `ConvertTo-Json` collapsing a one-element array).
@@ -1206,13 +1206,13 @@ GET    /similarity/embedding-plan?file_count=N      # the values a job would use
 `workers` and `time_limit` a job over `file_count` files would run with: a
 `first_pass` block, a `retry_pass` block (fewer workers, a longer budget), and
 for each a `basis` naming the figures the choice came from (`cap`, `cores`,
-`cores_measured`, `ram`, `files`). Its `time_limit` is always the effective
+`cores_kind`, `cores_measured`, `ram`, `files`). Its `time_limit` is always the effective
 budget — never the `0` that means "pass nothing and leave the SDK's own default
 in place". The web client uses it to pre-fill its two fields; the sizing rule
 itself stays on the server, so there is only ever one copy of it.
 
 `file_count` is optional. Omit it and the answer is the ceiling the host alone
-allows: every other input (the cap, the physical core count, free RAM) is
+allows: every other input (the cap, the processor count, free RAM) is
 settled before any file is chosen, and the file count can only lower the
 result. `file_count` and `basis.files` then come back `null`, which says the
 count was not one of the figures the minimum was taken over.
@@ -1225,7 +1225,7 @@ tuning:
 | `file_ids` | `string[]` | `file_id`s of CAD files already uploaded to the store (the standard route). |
 | `zip_file_id` | `string` | `file_id` of an already-uploaded ZIP archive to expand and register. |
 | `server_paths` | `string[]` | Paths **on the server machine**. Operator seeding only; returns **403** unless `HOOPS_AI_ALLOW_SERVER_PATHS=true`. |
-| `workers` | `int` | Parallel embedding workers. Omit to size automatically from CPU cores and free RAM (capped by `HOOPS_AI_MAX_WORKERS`, default 12). |
+| `workers` | `int` | Parallel embedding workers. Omit to size automatically: the smaller of the logical processor count (physical cores when `HOOPS_AI_INTRAOP_THREADS=0`), `(free RAM − 10% of total RAM) ÷ HOOPS_AI_MODEL_FOOTPRINT_MB` (default 768 MB per worker) and the file count. `HOOPS_AI_MAX_WORKERS` adds a cap only when it is set; there is no default cap. |
 | `time_limit` | `int` | Per-file embedding budget in seconds. Omit to use `HOOPS_AI_EMBED_TIME_LIMIT`, else the SDK's 120 s. Files that exceed it are reported with `retryable=true`. |
 | `selected_count` | `int` | How many files the caller actually picked. Display only — see below. |
 | `duplicate_paths` | `object` | `{ "<file_id>": ["<relative path>", ...] }` for the picked files that turned out to be byte-identical to each other. Display only — see below. |

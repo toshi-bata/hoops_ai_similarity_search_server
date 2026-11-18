@@ -154,7 +154,7 @@ export function createRegister({ getIndexName, onJobComplete }) {
   // The Workers / Time limit fields are pre-filled with the numbers the run
   // will really use, so the screen says what is going to happen instead of
   // "auto". The values come from GET /similarity/embedding-plan and are NEVER
-  // computed here: the sizing rule reads this host's physical cores and free
+  // computed here: the sizing rule reads this host's logical processors and free
   // RAM, and it has been re-tuned repeatedly (the cap, and logical-vs-physical
   // cores, both moved). A copy in the client would be wrong after the next
   // change, and wrong in a way nobody would notice. The client's job is to
@@ -208,8 +208,8 @@ export function createRegister({ getIndexName, onJobComplete }) {
   function describeBasis(label, plan) {
     const b = plan.basis || {};
     const bits = [
-      `cap ${b.cap}`,
-      `cores ${b.cores}${b.cores_measured ? '' : ' (approx)'}`,
+      b.cap == null ? 'no cap' : `cap ${b.cap}`,
+      `${b.cores_kind === 'logical' ? 'logical processors' : 'cores'} ${b.cores}${b.cores_measured ? '' : ' (approx)'}`,
       b.ram == null ? 'ram n/a' : `ram ${b.ram}`,
       // null means no selection yet, so the file count was not one of the
       // figures the server took the smallest of. Say that rather than "files

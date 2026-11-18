@@ -149,7 +149,8 @@ export function getIndexStats(name) {
 // pass and the retry pass. The sizing rule lives on the server and is NOT
 // mirrored here: it is re-measured per host (cores, free RAM) and has changed
 // several times. Returns { file_count, first_pass, retry_pass } where each pass
-// is { workers, time_limit, basis: { cap, cores, cores_measured, ram, files,
+// is { workers, time_limit, basis: { cap (null when unset), cores, cores_kind,
+// cores_measured, ram, files,
 // model_mb } }. time_limit is always an effective value, never 0.
 //
 // Pass nothing to plan for the host alone, before a selection exists: the

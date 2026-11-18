@@ -425,27 +425,30 @@ def _embed_error_detail(
 
 # --- Embedding tuning: worker count and per-file time budget -----------------
 #
-# Ported from hoops_ai_native_bridge's ComputeAutoWorkers. Every worker is a
-# spawned interpreter holding its own copy of the checkpoint (see
+# The rule matches hoops_ai_native_bridge's ComputeAutoWorkers and
+# hoops_ai_qt_sandbox (SimilarityIndexPanel.cpp). Every worker is a spawned
+# interpreter holding its own copy of the checkpoint (see
 # _MODEL_FOOTPRINT_MB_DEFAULT for what that measures out at), so peak RSS
-# grows roughly linearly with the worker count while throughput reaches a
-# plateau and then declines once RAM-bound. Measured on the bridge: light
-# single-body parts plateau near the physical core count (12 was the peak on a
-# 14-core machine, 8..cores within +/-5%); heavy assemblies plateau lower (12
-# peaked on a 16-core machine, and 16/20/24 were each slower than 8). So aim at
-# the plateau rather than a single "best" value -- run-to-run noise exceeds the
-# difference between neighbouring counts.
+# grows roughly linearly with the worker count.
 #
-# The default cap of 12 is where both of those curves peaked: 12 on the 14-core
-# machine with light parts, and 12 on the 16-core machine with heavy assemblies.
-# It is a safety valve, not a target -- the physical core count and the free-RAM
-# bound are what normally decide, and the cap only starts to bite above 12
-# physical cores.
+# With HOOPS_AI_INTRAOP_THREADS >= 1 (the default is 1) each worker runs one
+# BLAS/OpenMP thread, so the logical processor count is the ceiling:
+#     workers = min(logical processors,
+#                   (free RAM - 10% of total RAM) / model footprint,
+#                   file count)
+# Measured with that limit in place (forum article 5253, AWS g6.8xlarge,
+# 16 physical / 32 logical): 32 workers was fastest for index creation, 2.25x
+# faster than the best capped run (12). The free-RAM bound is what stops it on
+# a smaller host, and there is no default worker cap any more.
 #
-# The cap is not removed because "as many workers as cores" is measurably wrong
-# on the heavy corpus: 16, 20 and 24 workers were each slower than 8 there. A
-# host with more cores than that should be raised deliberately, after measuring
-# its own corpus, via HOOPS_AI_MAX_WORKERS.
+# The older plateau (light parts peaked at 12 on a 14-core machine; heavy
+# assemblies peaked at 12 on a 16-core machine, and 16/20/24 were each slower
+# than 8) was measured BEFORE the intra-op limit, when every worker also ran a
+# full set of BLAS threads and oversubscribed the cores. It no longer applies
+# with the limit on. It still describes the unlimited case, so with
+# HOOPS_AI_INTRAOP_THREADS=0 the ceiling stays the physical core count.
+#
+# HOOPS_AI_MAX_WORKERS is a cap only when it is set; unset means no cap.
 # The three variable names below are the ones hoops_ai and the bridge already
 # use, deliberately kept identical so one environment configures both.
 #
@@ -456,27 +459,23 @@ def _embed_error_detail(
 # -- that pool startup does not pay off for a few files -- is also weak, since
 # the ~55-60 s startup measured here was for a 20-worker pool and scales with
 # the worker count. Set it if your corpus is uniformly light.
-_MAX_WORKERS_DEFAULT = 12
 
-# What one worker of a normal pass is assumed to occupy, in MB. Measured, not
-# estimated: a 14-physical-core / 32 GB host finished a 10,250-file
-# registration on 12 workers at a peak of 25 GB (~79%). Twelve workers at the
-# previous 2048 MB would have put 24 GB of baseline alone under that peak,
-# which does not fit, so one worker costs about 1 GB and not two. The old 2048
-# was a conservative guess, and its cost was concrete: it handed ram_cap = 6 to
-# a machine that demonstrably completes on 12.
-#
-# This moves an estimate towards a measurement; it does not weaken the valve.
-# The bound is still proportional to free RAM and still leaves
-# _HOST_RAM_RESERVE_BYTES (2 GiB) to the host.
+# What one worker of a normal pass is assumed to occupy, in MB. Measured on a
+# 32 GB Windows laptop: about 0.62 GB per worker. 768 MB is that figure with
+# headroom, and is the value hoops_ai_qt_sandbox and the bridge use. (Earlier:
+# 2048 was a guess, then 1024 from a 12-worker / 25 GB peak.)
 #
 # Paired with _HEAVY_FOOTPRINT_FACTOR below: that factor is expressed as a
 # multiple of THIS number, so the retry pass's per-worker budget is the product
 # of the two. Changing either one alone changes that budget. See the factor's
 # own comment for the arithmetic it has to keep true.
-_MODEL_FOOTPRINT_MB_DEFAULT = 1024
+_MODEL_FOOTPRINT_MB_DEFAULT = 768
 _MIN_FILES_PARALLEL_DEFAULT = 1
-_HOST_RAM_RESERVE_BYTES = 2 * 1024 * 1024 * 1024
+
+# The share of total RAM kept free for the host. hoops_ai restarts a worker
+# once system memory use passes 90%, so the sizing has to stay below that line;
+# a fixed 2 GiB was too little on a large host and too much on a small one.
+_HOST_RAM_RESERVE_FRACTION = 0.10
 
 
 def _physical_core_cap() -> tuple:
@@ -514,17 +513,15 @@ def _physical_core_cap() -> tuple:
 # most.
 #
 # The number that matters is the per-worker budget, which is the PRODUCT of
-# this factor and _MODEL_FOOTPRINT_MB_DEFAULT above: 4 x 1024 MB = 4 GB. That
-# 4 GB is what hoops_ai_qt_sandbox's retry pass already allows for -- it sizes
-# pass 2 as round(free RAM / 4 GiB) (SimilarityIndexPanel.cpp, lines 1783-1786)
-# and measured 2..4 workers on real hosts. Same budget per worker, reached
-# through this server's existing knob rather than a second hard-coded gigabyte
-# figure, so HOOPS_AI_MODEL_FOOTPRINT_MB keeps moving both passes together.
+# this factor and _MODEL_FOOTPRINT_MB_DEFAULT above: 4 x 768 MB = 3 GB.
+# hoops_ai_qt_sandbox's retry pass sizes pass 2 as round(free RAM / 4 GiB)
+# (SimilarityIndexPanel.cpp) and measured 2..4 workers on real hosts, so this
+# budget is now 1 GB below that figure (it was equal at 4 x 1024 MB). The
+# factor was left at 4 deliberately; it is the product that the sizing uses,
+# and tests/test_embedding_plan.py pins it.
 #
-# Hence the two constants move together. When the base was halved from 2048 to
-# 1024 this factor was doubled from 2 to 4 in the same change, because halving
-# the base alone would have quietly dropped the retry budget to 2 GB and
-# falsified the sentence above. tests/test_embedding_plan.py pins the product.
+# The two constants move together: changing the base alone changes the retry
+# budget.
 _HEAVY_FOOTPRINT_FACTOR = 4
 
 # The per-file budget for the retry pass, in seconds. Measured, not chosen:
@@ -563,21 +560,29 @@ def _size_workers(file_count, footprint_factor: int = 1) -> dict[str, Any]:
     saying nothing would size a heavy retry exactly like a light first pass,
     which is the mistake the factor exists to prevent.
     """
-    max_workers = _env_int("HOOPS_AI_MAX_WORKERS", _MAX_WORKERS_DEFAULT, minimum=1)
+    max_workers = _env_int("HOOPS_AI_MAX_WORKERS", 0, minimum=1) or None
     model_mb = _env_int(
         "HOOPS_AI_MODEL_FOOTPRINT_MB", _MODEL_FOOTPRINT_MB_DEFAULT, minimum=1
     )
     factor = max(1, int(footprint_factor))
-    core_cap, cores_measured = _physical_core_cap()
+    # With one intra-op thread per worker the logical processors are usable;
+    # without the limit each worker multi-threads, so stay at physical cores.
+    if intraop_threads() >= 1:
+        core_cap, cores_measured = max(1, os.cpu_count() or 1), True
+        cores_kind = "logical"
+    else:
+        core_cap, cores_measured = _physical_core_cap()
+        cores_kind = "physical"
 
     ram_cap: Optional[int] = None
     available_gb = None
     try:
         import psutil
 
-        available = int(psutil.virtual_memory().available)
+        mem = psutil.virtual_memory()
+        available = int(mem.available)
         available_gb = available / (1024 ** 3)
-        usable = max(0, available - _HOST_RAM_RESERVE_BYTES)
+        usable = max(0, available - int(int(mem.total) * _HOST_RAM_RESERVE_FRACTION))
         ram_cap = int(usable // (model_mb * factor * 1024 * 1024))
     except Exception:
         # No psutil (or an unsupported platform): fall back to the core cap
@@ -585,7 +590,9 @@ def _size_workers(file_count, footprint_factor: int = 1) -> dict[str, Any]:
         logger.debug("[EMBED] RAM probe unavailable; sizing workers by cores only")
         core_cap = max(1, core_cap // factor)
 
-    bounds = [max_workers, core_cap]
+    bounds = [core_cap]
+    if max_workers is not None:
+        bounds.append(max_workers)
     if file_count is not None:
         bounds.append(max(1, file_count))
     if ram_cap is not None:
@@ -594,6 +601,7 @@ def _size_workers(file_count, footprint_factor: int = 1) -> dict[str, Any]:
         "workers": max(1, min(bounds)),
         "cap": max_workers,
         "cores": core_cap,
+        "cores_kind": cores_kind,
         "cores_measured": cores_measured,
         "ram": ram_cap,
         "available_gb": available_gb,
@@ -605,28 +613,26 @@ def _size_workers(file_count, footprint_factor: int = 1) -> dict[str, Any]:
 def compute_auto_workers(file_count: int) -> int:
     """Choose a worker count for *file_count* files.
 
-    ``min(HOOPS_AI_MAX_WORKERS, physical_cores, usable_RAM / model_footprint,
-    file_count)``. Physical cores rather than logical ones avoids E-core and SMT
-    oversubscription; never exceeding the file count keeps idle workers from
-    paying the checkpoint load for nothing.
+    ``min(logical_processors, (free_RAM - 10% of total) / model_footprint,
+    file_count)`` -- and ``HOOPS_AI_MAX_WORKERS`` as a further cap only when it
+    is set. With ``HOOPS_AI_INTRAOP_THREADS=0`` the processor bound is the
+    physical core count instead. Never exceeding the file count keeps idle
+    workers from paying the checkpoint load for nothing.
 
     This is only consulted when the caller passes no explicit worker count. An
     explicit value is forwarded to the SDK unchanged, cap included -- the caps
     here exist to pick a safe default, not to overrule a deliberate choice.
 
     Deliberately never returns ``None`` (which would let the SDK auto-detect
-    across all logical cores): that oversubscribes RAM, and on this corpus a
-    20-worker run was ~2x slower per file than the bridge's 12.
+    across all logical cores): that oversubscribes RAM.
 
-    The physical core count is the measured throughput optimum once
-    ``HOOPS_AI_INTRAOP_THREADS`` pins each worker to one intra-op thread (see
-    :func:`intraop_threads`), so it is normally what decides -- together with the
-    free-RAM bound. ``HOOPS_AI_MAX_WORKERS`` defaults to 12 because that is where
-    both measured curves peaked (light parts on 14 cores, heavy assemblies on
-    16); it is a safety valve against the heavy corpus getting slower past that
-    point, and only bites on a host with more than 12 physical cores.
+    Once ``HOOPS_AI_INTRAOP_THREADS`` pins each worker to one intra-op thread
+    (see :func:`intraop_threads`) the logical processor count is the measured
+    optimum (forum article 5253: 32 workers on 32 logical processors was 2.25x
+    faster than the best capped run), and free RAM is what normally decides on
+    a smaller host.
     """
-    max_workers = _env_int("HOOPS_AI_MAX_WORKERS", _MAX_WORKERS_DEFAULT, minimum=1)
+    max_workers = _env_int("HOOPS_AI_MAX_WORKERS", 0, minimum=1) or None
     model_mb = _env_int(
         "HOOPS_AI_MODEL_FOOTPRINT_MB", _MODEL_FOOTPRINT_MB_DEFAULT, minimum=1
     )
@@ -641,27 +647,26 @@ def compute_auto_workers(file_count: int) -> int:
     core_cap = sizing["cores"]
     ram_cap = sizing["ram"]
 
-    # Free RAM is sampled at job start and fluctuates -- a preceding job's
-    # workers may not have been reclaimed yet -- so a surprisingly low count
-    # must be explainable from the log rather than looking arbitrary. The
-    # cores= field says which of the two sources it came from, because a
-    # psutil-less host silently halves its logical count and the resulting
-    # worker count is otherwise indistinguishable from a measured one.
+    # cores= says which source it came from (logical, or physical when the
+    # intra-op limit is off; "approx" for a psutil-less physical estimate).
     logger.info(
-        "[EMBED] auto workers=%d (cap=%d, cores=%d(%s), ram=%s, files=%d)",
-        chosen, max_workers, core_cap,
-        "physical" if sizing["cores_measured"] else "approx",
+        "[EMBED] auto workers=%d (cap=%s, cores=%d(%s), ram=%s, files=%d)",
+        chosen, max_workers if max_workers is not None else "none", core_cap,
+        sizing["cores_kind"] if sizing["cores_measured"] else "approx",
         ram_cap if ram_cap is not None else "n/a", file_count,
     )
-    if ram_cap is not None and ram_cap <= 1 and min(max_workers, core_cap, file_count) > 1:
+    cores_limit = min(
+        [v for v in (max_workers, core_cap, file_count) if v is not None]
+    )
+    if ram_cap is not None and ram_cap <= 1 and cores_limit > 1:
         logger.warning(
             "[EMBED] falling back to sequential embedding: only %.1f GB free, "
-            "and each worker needs %d MB on top of a %.1f GB host reserve. "
+            "and each worker needs %d MB on top of a %d%% host reserve. "
             "Cores would allow %d. Wait for the previous job's workers to be "
             "reclaimed, or pass an explicit 'workers' to override.",
             sizing["available_gb"], model_mb,
-            _HOST_RAM_RESERVE_BYTES / (1024 ** 3),
-            min(max_workers, core_cap),
+            round(_HOST_RAM_RESERVE_FRACTION * 100),
+            cores_limit,
         )
     return chosen
 
@@ -711,6 +716,7 @@ def plan_embedding_run(file_count=None) -> dict[str, Any]:
             "basis": {
                 "cap": sizing["cap"],
                 "cores": sizing["cores"],
+                "cores_kind": sizing["cores_kind"],
                 "cores_measured": bool(sizing["cores_measured"]),
                 "ram": sizing["ram"],
                 "files": sizing["files"],

@@ -107,8 +107,8 @@ logger = logging.getLogger(__name__)
 #   HOOPS_AI_MAX_TAGS_PER_PART       tags.py         Max index tags one part may carry.
 #   HOOPS_AI_MAX_CONTEXT_KEYS        context_store.py Max distinct context keys per part.
 #   HOOPS_AI_MAX_CONTEXT_PREDICT_KEYS context.py     Max keys one predict-context request scores.
-#   HOOPS_AI_MAX_WORKERS             index_registry.py  Cap on the auto worker count.
-#   HOOPS_AI_MODEL_FOOTPRINT_MB      index_registry.py  Assumed per-worker RSS for RAM sizing.
+#   HOOPS_AI_MAX_WORKERS             index_registry.py  Cap on the auto worker count (none when unset).
+#   HOOPS_AI_MODEL_FOOTPRINT_MB      index_registry.py  Assumed per-worker RSS for RAM sizing (default 768).
 #   HOOPS_AI_MIN_FILES_PARALLEL      index_registry.py  Force one worker below this file count.
 #   HOOPS_AI_EMBED_TIME_LIMIT        index_registry.py  Per-file embedding budget (s); 0 = SDK's.
 #   HOOPS_AI_INTRAOP_THREADS         embeddings.py   BLAS/OpenMP threads per embedding worker.

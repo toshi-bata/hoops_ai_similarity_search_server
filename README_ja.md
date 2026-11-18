@@ -847,7 +847,7 @@ curl -X POST "$base/similarity/index/$index/search?top_k=10" -F "file=@/cad/part
 ```
 
 `workers` と `time_limit` は任意です — 省略すると、ワーカー数は自動的に決定され
-（`HOOPS_AI_MAX_WORKERS` で上限）、ファイルごとの既定の制限時間が使われます。すべての
+（`HOOPS_AI_MAX_WORKERS` を設定した場合のみ上限）、ファイルごとの既定の制限時間が使われます。すべての
 オプションについては下記の *一括登録ジョブ* を参照してください。上記の PowerShell の
 「JSON をファイル経由で渡す」書き方に注意してください。これは Windows の2つの落とし穴
 （PowerShell がインラインの `-d` JSON からクォートを剥がすこと、`ConvertTo-Json` が
@@ -1194,14 +1194,14 @@ GET    /similarity/embedding-plan?file_count=N      # ジョブが実際に使�
 `GET /similarity/embedding-plan` は、何も作成せずに、`file_count` 件のファイルを
 扱うジョブが使う `workers` と `time_limit` を返します。1パス目の `first_pass`、
 リトライパスの `retry_pass`（ワーカーは少なく、制限時間は長い）、そしてそれぞれに
-値の根拠を示す `basis`（`cap`、`cores`、`cores_measured`、`ram`、`files`）が
+値の根拠を示す `basis`（`cap`、`cores`、`cores_kind`、`cores_measured`、`ram`、`files`）が
 含まれます。`time_limit` は常に実効値で、「何も渡さず SDK 既定のままにする」を
 意味する `0` が返ることはありません。Web クライアントはこれを使って2つの入力欄を
 事前入力します。サイジングの規則そのものはサーバー側にとどまるため、規則の写しが
 増えることはありません。
 
 `file_count` は省略できます。省略した場合は、ホスト単体で許される上限値が返ります。
-ファイル数以外の材料（上限値、物理コア数、空き RAM）は、ファイルを選ぶ前から確定して
+ファイル数以外の材料（上限値、プロセッサ数、空き RAM）は、ファイルを選ぶ前から確定して
 おり、ファイル数は値を下げる方向にしか効かないためです。このとき `file_count` と
 `basis.files` は `null` になり、ファイル数が min の対象に入っていないことを示します。
 
@@ -1213,7 +1213,7 @@ GET    /similarity/embedding-plan?file_count=N      # ジョブが実際に使�
 | `file_ids` | `string[]` | 既にストアにアップロード済みの CAD ファイルの `file_id`（標準的な経路）。 |
 | `zip_file_id` | `string` | 展開して登録する、アップロード済み ZIP アーカイブの `file_id`。 |
 | `server_paths` | `string[]` | **サーバーマシン上** のパス。オペレーターのシードのみ。`HOOPS_AI_ALLOW_SERVER_PATHS=true` でない限り **403** を返します。 |
-| `workers` | `int` | 並列埋め込みワーカー数。省略すると CPU コア数と空き RAM から自動でサイズ決定します（`HOOPS_AI_MAX_WORKERS`、既定 12 で上限）。 |
+| `workers` | `int` | 並列埋め込みワーカー数。省略すると自動でサイズ決定します。論理プロセッサ数（`HOOPS_AI_INTRAOP_THREADS=0` のときは物理コア数）、`(空き RAM − 全メモリの 10%) ÷ HOOPS_AI_MODEL_FOOTPRINT_MB`（既定 1 ワーカーあたり 768 MB）、ファイル数のうち最小の値です。`HOOPS_AI_MAX_WORKERS` は設定したときだけ上限になり、既定の上限はありません。 |
 | `time_limit` | `int` | ファイルごとの埋め込み予算（秒）。省略すると `HOOPS_AI_EMBED_TIME_LIMIT`、それも無ければ SDK の 120 秒を使います。超過したファイルは `retryable=true` として報告されます。 |
 | `selected_count` | `int` | 呼び出し側が実際に選択したファイル数。表示専用（下記参照）。 |
 | `duplicate_paths` | `object` | `{ "<file_id>": ["<相対パス>", ...] }`。選択したファイルのうち、互いにバイト単位で同一だったものです。表示専用（下記参照）。 |
