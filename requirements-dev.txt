@@ -4,3 +4,5 @@
 # (see requirements.txt).
 pytest
 httpx
+# mcp_server/tests load mcp_server/server.py, which imports the MCP SDK.
+mcp[cli]>=1.0.0,<2

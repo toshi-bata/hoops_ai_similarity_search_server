@@ -8,6 +8,9 @@ from pathlib import Path
 import httpx
 import pytest
 
+# server.py imports the MCP SDK; skip cleanly where it is not installed.
+pytest.importorskip("mcp", reason="the MCP SDK is not installed (pip install -r requirements-dev.txt)")
+
 SERVER_PY = Path(__file__).resolve().parents[1] / "server.py"
 
 
