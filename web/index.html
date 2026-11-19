@@ -599,6 +599,16 @@
           <label>Time limit (s)
             <input id="register-timelimit" type="number" min="1" placeholder="auto" />
           </label>
+          <label class="register-retry-toggle" title="After the first pass, retry the files that timed out with fewer workers and a longer time limit, in the same job.">
+            <input id="register-retry" type="checkbox" checked />
+            Retry timeouts automatically
+          </label>
+          <label>Pass 2 workers
+            <input id="register-retry-workers" type="number" min="1" max="64" placeholder="auto" />
+          </label>
+          <label>Pass 2 time limit (s)
+            <input id="register-retry-timelimit" type="number" min="1" placeholder="auto" />
+          </label>
           <button id="register-submit" type="button" class="register-submit" disabled>Upload &amp; register</button>
         </div>
 

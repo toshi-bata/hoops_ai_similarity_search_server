@@ -184,11 +184,13 @@ export function createRegister({ getIndexName, onJobComplete }) {
   // opened, and when a job settles. Both start a new situation -- a fresh
   // dialog, or the retry pass, which needs its own worker count and budget --
   // so carrying the previous one's input forward would say nothing true.
-  const planOwns = { workers: true, timeLimit: true };
+  const planOwns = { workers: true, timeLimit: true, retryWorkers: true, retryTimeLimit: true };
 
   function releasePlanFields() {
     planOwns.workers = true;
     planOwns.timeLimit = true;
+    planOwns.retryWorkers = true;
+    planOwns.retryTimeLimit = true;
   }
 
   function clearPlanFields() {
@@ -199,6 +201,8 @@ export function createRegister({ getIndexName, onJobComplete }) {
     el('register-timelimit').value = '';
     el('register-workers').title = '';
     el('register-timelimit').title = '';
+    el('register-retry-workers').value = '';
+    el('register-retry-timelimit').value = '';
   }
 
   // Describe where a worker count came from: the same four figures the server
@@ -248,6 +252,25 @@ export function createRegister({ getIndexName, onJobComplete }) {
     }
     if (token !== planToken) return;
     applyPlan(plan.first_pass, 'First pass');
+    applyRetryPlan(plan.retry_pass);
+  }
+
+  // Show the server's Pass 2 figures. They are sized for the case where every
+  // selected file has to be retried, so they are an upper bound: the job sizes
+  // Pass 2 for the files that really timed out unless the user typed a value,
+  // which is why readRetryOptions() sends only what the user changed.
+  function applyRetryPlan(pass) {
+    if (!pass) return;
+    if (planOwns.retryWorkers) {
+      el('register-retry-workers').value = String(pass.workers);
+      el('register-retry-workers').title = describeBasis('Pass 2', pass) +
+        ' Left unchanged, the job sizes Pass 2 for the files that timed out.';
+    }
+    if (planOwns.retryTimeLimit) {
+      el('register-retry-timelimit').value = String(pass.time_limit);
+      el('register-retry-timelimit').title =
+        `Pass 2: ${pass.time_limit}s per file for the files that timed out in Pass 1.`;
+    }
   }
 
   // Swap in the retry pass: fewer workers, a longer budget. index.html has
@@ -396,6 +419,28 @@ export function createRegister({ getIndexName, onJobComplete }) {
     return { options };
   }
 
+  // Pass 2 options for a bulk run: nothing when the checkbox is off, and the
+  // two overrides only when the user changed them -- an untouched field shows
+  // the plan's upper bound, and sending it would stop the server sizing Pass 2
+  // for the files that actually timed out.
+  function readRetryOptions() {
+    if (!el('register-retry').checked) return { options: {} };
+    const options = { retryTimeouts: true };
+    const fields = [
+      ['register-retry-workers', 'retryWorkers', 'retryWorkers', 'Pass 2 workers'],
+      ['register-retry-timelimit', 'retryTimeLimit', 'retryTimeLimit', 'Pass 2 time limit'],
+    ];
+    for (const [id, owner, key, label] of fields) {
+      if (planOwns[owner]) continue;
+      const raw = el(id).value.trim();
+      if (!raw) continue;
+      const value = Number(raw);
+      if (!Number.isFinite(value) || value < 1) return { error: `${label} must be a number \u2265 1.` };
+      options[key] = value;
+    }
+    return { options };
+  }
+
   // Queue a job for the given file_ids and follow it. Shared by the bulk run,
   // the individual file action, and resubmit -- each caller resets the run UI
   // itself before invoking this, since they need control over what phase text
@@ -433,6 +478,12 @@ export function createRegister({ getIndexName, onJobComplete }) {
       setPhase(error, true);
       return;
     }
+    const { options: retryOptions, error: retryError } = readRetryOptions();
+    if (retryError) {
+      resetRunUi();
+      setPhase(retryError, true);
+      return;
+    }
     submitButton.disabled = true;
     let queued = false;
     try {
@@ -448,6 +499,7 @@ export function createRegister({ getIndexName, onJobComplete }) {
       // looked up afterwards: the figures must describe this submission only.
       const jobOptions = {
         ...options,
+        ...retryOptions,
         selectedCount: selectedFiles.length,
         duplicatePaths: collapsed,
       };
@@ -491,9 +543,18 @@ export function createRegister({ getIndexName, onJobComplete }) {
     // spinning up its workers): hold the bar at the job's start point and sweep
     // the indeterminate stripe so this stretch does not look frozen.
     const started = total > 0;
-    const overall = embedBase + (started ? clamp01(done / total) * embedSpan : 0);
+    const retrying = p.phase === 'retry';
+    // Pass 1 is complete by definition once Pass 2 runs, and the counters
+    // restart at the retry set; holding the bar full keeps it from sliding back.
+    const overall = retrying
+      ? embedBase + embedSpan
+      : embedBase + (started ? clamp01(done / total) * embedSpan : 0);
     const indeterminate = !started && !TERMINAL.has(job.status);
-    const bits = [`${job.status}`, `phase: ${p.phase || '-'}`, `${done} / ${total}`];
+    const bits = [
+      `${job.status}`,
+      retrying ? `Pass 2: retrying ${total} timed-out file(s)` : `phase: ${p.phase || '-'}`,
+      `${done} / ${total}`,
+    ];
     if (p.errors) bits.push(`${p.errors} error(s)`);
     if (p.heavy) bits.push(`${p.heavy} heavy`);
     setOverall(overall, bits.join('  \u00b7  '), { indeterminate, showCancel: true });
@@ -740,6 +801,8 @@ export function createRegister({ getIndexName, onJobComplete }) {
   // plan stops writing on the first keystroke, not when focus leaves.
   el('register-workers').addEventListener('input', () => { planOwns.workers = false; });
   el('register-timelimit').addEventListener('input', () => { planOwns.timeLimit = false; });
+  el('register-retry-workers').addEventListener('input', () => { planOwns.retryWorkers = false; });
+  el('register-retry-timelimit').addEventListener('input', () => { planOwns.retryTimeLimit = false; });
   submitButton.addEventListener('click', () => runBulk().catch(() => {}));
   resubmitButton.addEventListener('click', () => resubmit().catch(() => {}));
   cancelButton.addEventListener('click', async () => {

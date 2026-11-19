@@ -396,7 +396,11 @@ class TestTypedValuesSurviveTheNextPlan(unittest.TestCase):
 
     def test_the_two_fields_are_tracked_separately(self):
         # Typing in one must not freeze the other at a stale number.
-        self.assertIn("const planOwns = { workers: true, timeLimit: true };", self.text)
+        self.assertIn(
+            "const planOwns = { workers: true, timeLimit: true, "
+            "retryWorkers: true, retryTimeLimit: true };",
+            self.text,
+        )
         self.assertIn(
             "el('register-workers').addEventListener('input', "
             "() => { planOwns.workers = false; });",

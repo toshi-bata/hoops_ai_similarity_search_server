@@ -1227,6 +1227,9 @@ tuning:
 | `server_paths` | `string[]` | Paths **on the server machine**. Operator seeding only; returns **403** unless `HOOPS_AI_ALLOW_SERVER_PATHS=true`. |
 | `workers` | `int` | Parallel embedding workers. Omit to size automatically: the smaller of the logical processor count (physical cores when `HOOPS_AI_INTRAOP_THREADS=0`), `(free RAM − 10% of total RAM) ÷ HOOPS_AI_MODEL_FOOTPRINT_MB` (default 768 MB per worker) and the file count. `HOOPS_AI_MAX_WORKERS` adds a cap only when it is set; there is no default cap. |
 | `time_limit` | `int` | Per-file embedding budget in seconds. Omit to use `HOOPS_AI_EMBED_TIME_LIMIT`, else the SDK's 120 s. Files that exceed it are reported with `retryable=true`. |
+| `retry_timeouts` | `bool` | Default `false`. When `true`, the job runs a second pass over the retryable failures of the first (never over permanent errors) and reports the final state. |
+| `retry_workers` | `int` | Workers for the second pass. Omit to size it for the number of files being retried, as `retry_pass` of `GET /similarity/embedding-plan` does. Never more than that number. |
+| `retry_time_limit` | `int` | Per-file budget in seconds for the second pass. Omit for the plan's `retry_pass.time_limit` (1200 s). |
 | `selected_count` | `int` | How many files the caller actually picked. Display only — see below. |
 | `duplicate_paths` | `object` | `{ "<file_id>": ["<relative path>", ...] }` for the picked files that turned out to be byte-identical to each other. Display only — see below. |
 
@@ -1245,7 +1248,8 @@ consulted, and a job that sends neither field simply reports no selection. The
 paths go through the same refuse-don't-repair sanitiser as uploads and remain
 display data: they never reach the filesystem.
 
-The job runs one embedding pass over all inputs and returns immediately with a
+The job runs one embedding pass over all inputs (two with `retry_timeouts`, see
+below) and returns immediately with a
 `job_id`; poll `GET .../jobs/{job_id}` for `progress` and, when finished, a
 `report_url`. Jobs run one at a time by default (`HOOPS_AI_JOB_MAX_CONCURRENCY`),
 so a job may sit in `queued` for a while. Statuses are `queued` → `running` →
@@ -1284,11 +1288,18 @@ curl -X POST "http://127.0.0.1:8000/similarity/index/my-parts/jobs/add" \
 ```
 
 Failed files are annotated with a `retryable` flag. For a large corpus, run the
-two-pass strategy: submit everything with many `workers` and a short
-`time_limit`, then resubmit the failures whose `retryable` is true as a second
-job with few `workers` and a long `time_limit`. Non-retryable failures are
+two-pass strategy. Either send `"retry_timeouts": true` and let the job do it —
+after the first pass it retries the retryable files on the same index with fewer
+workers and a longer budget (`retry_workers`, `retry_time_limit`), and
+`summary` and the report describe the final state, with the per-pass figures in
+`summary.passes` and a `[RECOVERED IN PASS 2]` report section — or submit
+everything with many `workers` and a short `time_limit`, then resubmit the
+failures whose `retryable` is true as a second job with few `workers` and a long
+`time_limit`. During the second pass `progress.phase` is `retry`,
+`progress.current_pass` is `2`, and `done` / `total` count only the files being
+retried. Non-retryable failures are
 deterministic CAD errors that will never succeed, however long the budget.
-Cancellation only takes effect **before** a job starts embedding, so split a
+Cancellation takes effect **before** each pass starts, not during one, so split a
 large corpus into several jobs to keep cancellation and commit granularity under
 your control.
 
@@ -1300,8 +1311,12 @@ the worker count, which is correct). The values come from
 count was derived from, and says so plainly while no file count is known yet.
 Edit a value to override it, or
 clear a field to send nothing and let the server size that half of the run —
-which is what every non-browser caller does. When the job finishes with
-retryable failures, a **Resubmit** button appears and the two fields change to
+which is what every non-browser caller does. **Retry timeouts automatically**
+(on by default) sends `retry_timeouts` and shows the Pass 2 workers and time
+limit next to it; the Pass 2 figures are sent only if you change them. When a
+job finishes with
+retryable failures (for example with the box unticked), a **Resubmit** button
+appears and the two fields change to
 the retry-pass values, so the second pass is one click rather than a lookup.
 
 ---

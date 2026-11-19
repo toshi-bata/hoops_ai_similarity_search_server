@@ -525,6 +525,9 @@ export function uploadBatch(files) {
 // and returns at once. `workers` and `timeLimit` are optional tuning: omit for
 // the server's automatic sizing, or use few workers + a long timeLimit for a
 // retry pass over heavy assemblies (the documented two-pass loop).
+// `retryTimeouts` makes the job run that second pass itself over the files that
+// timed out; `retryWorkers` / `retryTimeLimit` override its sizing and are
+// only meaningful with it.
 //
 // `selectedCount` and `duplicatePaths` describe the caller's own selection:
 // how many files were picked, and which relative paths in that selection
@@ -533,7 +536,11 @@ export function uploadBatch(files) {
 // "input=10250". Both are optional; a caller with no selection (curl, MCP, a
 // single-file registration) sends neither.
 export function createIndexJob(
-  name, fileIds, { workers, timeLimit, selectedCount, duplicatePaths } = {},
+  name, fileIds,
+  {
+    workers, timeLimit, selectedCount, duplicatePaths,
+    retryTimeouts, retryWorkers, retryTimeLimit,
+  } = {},
 ) {
   return request(`/similarity/index/${encodeURIComponent(name)}/jobs/add`, {
     method: 'POST',
@@ -541,6 +548,9 @@ export function createIndexJob(
       file_ids: fileIds,
       workers,
       time_limit: timeLimit,
+      retry_timeouts: retryTimeouts,
+      retry_workers: retryWorkers,
+      retry_time_limit: retryTimeLimit,
       selected_count: selectedCount,
       duplicate_paths: duplicatePaths,
     },

@@ -72,7 +72,7 @@ machine, or with a server that can see the same paths.
 | Tags | `list_tags`, `parts_by_tag` | `GET .../tags`, `GET .../parts?tags=` |
 | | `set_part_tags`, `tag_parts`, `untag_parts` | `PUT .../parts/{id}/tags`, `POST` / `DELETE .../tags/{tag}/parts` |
 | Register | `create_index(name)` | `POST /similarity/index/create` |
-| | `register_files(index, paths, folder, recursive)` | `POST /files/upload-from-path`, `POST .../jobs/add` |
+| | `register_files(index, paths, folder, recursive, retry_timeouts)` | `POST /files/upload-from-path`, `POST .../jobs/add` |
 | | `job_status`, `job_report` | `GET .../jobs/{id}`, `GET .../jobs/{id}/report` |
 
 Irreversible operations (deleting tags, clearing every tag, deleting an index
@@ -90,7 +90,10 @@ Notes on what the API allows:
 - `get_part` and `list_parts(filename=...)` page through the listing, because
   the API has no single-part lookup and no file-name filter.
 - `register_files` uploads each file by path (up to 500 per call) and then
-  submits the job; call it again for the rest.
+  submits the job; call it again for the rest. The job retries files that timed
+  out in a second pass (`retry_timeouts`, on by default; pass `false` for one
+  pass only). `job_status` reports `current_pass` and a per-pass summary in
+  `passes`.
 
 ## Automatic start and `stop_server`
 

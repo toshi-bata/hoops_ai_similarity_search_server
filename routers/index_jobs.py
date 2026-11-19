@@ -60,6 +60,33 @@ class IndexAddJobRequest(BaseModel):
             "resubmit them as a second job with a longer budget."
         ),
     )
+    retry_timeouts: bool = Field(
+        False,
+        description=(
+            "When true, the job runs a second pass over the files that timed "
+            "out (or failed for an unknown reason) in the first, with fewer "
+            "workers and a longer budget. Permanent failures are never "
+            "retried. Off by default: the first pass alone, as before."
+        ),
+    )
+    retry_workers: Optional[int] = Field(
+        None,
+        ge=1,
+        description=(
+            "Workers for the second pass. Omit to size it for the number of "
+            "files to retry, the way GET /embedding-plan sizes retry_pass. "
+            "Only used with retry_timeouts."
+        ),
+    )
+    retry_time_limit: Optional[int] = Field(
+        None,
+        ge=1,
+        description=(
+            "Per-file budget in seconds for the second pass. Omit for the "
+            "server's retry budget (retry_pass.time_limit of "
+            "GET /embedding-plan). Only used with retry_timeouts."
+        ),
+    )
     selected_count: Optional[int] = Field(
         None,
         ge=0,
@@ -82,13 +109,16 @@ class IndexAddJobRequest(BaseModel):
 
 class JobProgress(BaseModel):
     # phase is "embedding" while the batch runs, "heavy" while the SDK works
-    # through its single-worker RAM fallback, then "done". done/errors/heavy
-    # advance live: they are parsed from the SDK's own progress bar.
+    # through its single-worker RAM fallback, "retry" during the optional
+    # second pass, then "done". done/errors/heavy advance live: they are parsed
+    # from the SDK's own progress bar. During the second pass, total and done
+    # count only the files being retried.
     phase: str
     done: int
     total: int
     errors: int
     heavy: int = 0
+    current_pass: int = 1
 
 
 class JobAcceptedResponse(BaseModel):
@@ -147,6 +177,7 @@ def _public_job(record: dict) -> JobStatusResponse:
             total=int(progress.get("total", 0)),
             errors=int(progress.get("errors", 0)),
             heavy=int(progress.get("heavy", 0)),
+            current_pass=int(progress.get("pass", 1)),
         ),
         summary=record.get("summary") or {},
         errors=record.get("errors") or [],
@@ -315,6 +346,7 @@ def create_index_add_job(
             "duplicates_dropped": duplicates,
             "workers": payload.workers,
             "time_limit": payload.time_limit,
+            "retry_timeouts": payload.retry_timeouts,
         },
         index_name=name,
     )
@@ -330,6 +362,9 @@ def create_index_add_job(
             unique_ids,
             num_workers=payload.workers,
             time_limit=payload.time_limit,
+            retry_timeouts=payload.retry_timeouts,
+            retry_workers=payload.retry_workers,
+            retry_time_limit=payload.retry_time_limit,
             selected_count=selected_count,
             collapsed_paths=collapsed,
         ),

@@ -217,3 +217,45 @@ def test_model_consistency_trims_checkpoint_and_reports_sdk(srv):
     assert out["status"] == "match" and out["sdk_status"] == "partial_mismatch"
     assert out["current_hoops_ai_version"] == "1.2.0"
     assert out["sdk_mismatching_files"] == 1 and out["sdk_unknown_files"] == 1
+
+
+def _register_handler(sent):
+    def handler(request):
+        if request.url.path == "/files/upload-from-path":
+            return httpx.Response(200, json={"files": [{"file_id": "x", "filename": "f"}]})
+        if request.url.path.endswith("/jobs/add"):
+            sent.update(json.loads(request.content))
+            return httpx.Response(202, json={"job_id": "j1", "status": "queued"})
+        return httpx.Response(200, json=[])
+    return handler
+
+
+@pytest.mark.parametrize("kwargs,expected", [({}, True), ({"retry_timeouts": False}, False)])
+def test_register_files_sends_retry_timeouts(srv, kwargs, expected):
+    sent = {}
+    srv._transport = _transport(_register_handler(sent))
+    out = srv.register_files("idx", paths=["a.stp"], **kwargs)
+    assert out["job_id"] == "j1"
+    assert sent["retry_timeouts"] is expected
+
+
+def test_job_status_reports_current_pass_and_passes(srv):
+    body = {
+        "job_id": "j1", "status": "running", "errors": [],
+        "progress": {"phase": "retry", "current_pass": 2},
+        "summary": {"passes": [{"pass": 1, "workers": 8, "time_limit": 120,
+                                "submitted": 10, "added": 8, "failed": 2,
+                                "retryable": 2, "seconds": 5.0, "extra": "x"}]},
+    }
+
+    def handler(request):
+        if request.url.path.endswith("/jobs/j1"):
+            return httpx.Response(200, json=body)
+        return httpx.Response(200, json=[])
+
+    srv._transport = _transport(handler)
+    out = srv.job_status("idx", "j1")
+    assert out["current_pass"] == 2
+    assert out["passes"] == [{"pass": 1, "workers": 8, "time_limit": 120,
+                              "submitted": 10, "added": 8, "failed": 2,
+                              "retryable": 2, "seconds": 5.0}]

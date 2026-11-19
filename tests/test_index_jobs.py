@@ -486,8 +486,8 @@ class TestFailureReporting(TestRunIndexAddJob):
         self.assertEqual(ctx.error_items[0]["detail"], "Failed to load: NoRootInModel")
 
     def test_the_job_stays_a_single_sdk_call(self):
-        # The retry pass belongs to the client, so a timeout must not make the
-        # server embed twice.
+        # Without retry_timeouts the retry pass belongs to the client, so a
+        # timeout must not make the server embed twice.
         self._fake(errors_for={"1"}, detail="Timeout (CUMULATIVE) after 120s")
         core.run_index_add_job(_FakeCtx(), "idx", ["0", "1"])
         self.assertEqual(len(self.calls), 1)
@@ -567,6 +567,171 @@ class TestLiveProgress(TestRunIndexAddJob):
         ctx = _FakeCtx()
         core.run_index_add_job(ctx, "idx", ["0", "1"])
         self.assertEqual(ctx.total, 2)
+
+
+class TestSecondPass(unittest.TestCase):
+    """retry_timeouts: Pass 2 over the retryable failures of Pass 1."""
+
+    TIMEOUT = "Timeout (CUMULATIVE) after 120s"
+
+    def setUp(self):
+        self._orig = index_registry.add_to_index
+        self._orig_store = jobs.get_index_job_store
+        self._orig_heavy = storage.read_too_heavy_files
+        self._orig_prewarm = assembly.prewarm_assembly_matcher
+        self._orig_plan = index_registry.plan_embedding_run
+        self._tmp = tempfile.TemporaryDirectory()
+        jobs.get_index_job_store = lambda: _FakeStore(self._tmp.name)
+        assembly.prewarm_assembly_matcher = lambda name: True
+        index_registry.plan_embedding_run = lambda n=None: {
+            "retry_pass": {"workers": 6, "time_limit": 1200}
+        }
+        self.calls = []
+        self.heavy_reads = 0
+        self.heavy_lines = []
+
+        def read_heavy(*a, **k):
+            self.heavy_reads += 1
+            return list(self.heavy_lines)
+
+        storage.read_too_heavy_files = read_heavy
+
+    def tearDown(self):
+        index_registry.add_to_index = self._orig
+        jobs.get_index_job_store = self._orig_store
+        storage.read_too_heavy_files = self._orig_heavy
+        assembly.prewarm_assembly_matcher = self._orig_prewarm
+        index_registry.plan_embedding_run = self._orig_plan
+        self._tmp.cleanup()
+
+    def _fake(self, first=None, second=None):
+        """first / second: {file_id: detail} of the files that fail in that call."""
+        plans = [first or {}, second or {}]
+
+        def add_to_index(name, file_ids, num_workers=None, time_limit=None,
+                         log_dir=None, progress_cb=None):
+            fails = plans[min(len(self.calls), 1)]
+            self.calls.append({"files": list(file_ids), "workers": num_workers,
+                               "limit": time_limit})
+            errs = [{"file_id": f, "detail": fails[f]} for f in file_ids if f in fails]
+            return {"added": len(file_ids) - len(errs), "updated": 0,
+                    "index_count": 50 + len(self.calls), "errors": errs}
+
+        index_registry.add_to_index = add_to_index
+
+    def _run(self, ids, ctx=None, **kw):
+        ctx = ctx or _FakeCtx()
+        core.run_index_add_job(ctx, "idx", ids, num_workers=4, time_limit=120, **kw)
+        return ctx
+
+    def _report(self, ctx):
+        return (pathlib.Path(self._tmp.name) / ctx.job_id / "report.txt").read_text(
+            encoding="utf-8")
+
+    def test_without_the_flag_there_is_one_call_and_the_old_report(self):
+        self._fake(first={"1": self.TIMEOUT})
+        ctx = self._run(["0", "1"])
+        self.assertEqual(len(self.calls), 1)
+        self.assertEqual([p["pass"] for p in ctx.summary["passes"]], [1])
+        text = self._report(ctx)
+        self.assertNotIn("# Pass", text)
+        self.assertNotIn("[RECOVERED IN PASS 2]", text)
+
+    def test_pass_two_retries_only_the_retryable_files(self):
+        self._fake(first={"1": self.TIMEOUT, "2": "Failed to load: bad"})
+        self._run(["0", "1", "2"], retry_timeouts=True)
+        self.assertEqual(len(self.calls), 2)
+        self.assertEqual(self.calls[1]["files"], ["1"])
+
+    def test_pass_two_uses_the_plan_and_never_more_workers_than_files(self):
+        self._fake(first={"1": self.TIMEOUT, "2": self.TIMEOUT})
+        self._run(["0", "1", "2"], retry_timeouts=True)
+        self.assertEqual(self.calls[1]["workers"], 2)  # plan says 6, 2 files
+        self.assertEqual(self.calls[1]["limit"], 1200)
+
+    def test_explicit_retry_values_win(self):
+        self._fake(first={"1": self.TIMEOUT, "2": self.TIMEOUT, "3": self.TIMEOUT})
+        self._run(["0", "1", "2", "3"], retry_timeouts=True,
+                  retry_workers=3, retry_time_limit=900)
+        self.assertEqual((self.calls[1]["workers"], self.calls[1]["limit"]), (3, 900))
+
+    def test_recovered_files_leave_the_failures_and_add_up(self):
+        self._fake(first={"1": self.TIMEOUT, "2": self.TIMEOUT},
+                   second={"2": self.TIMEOUT})
+        ctx = self._run(["0", "1", "2"], retry_timeouts=True)
+        s = ctx.summary
+        self.assertEqual((s["added"], s["failed"], s["retryable"]), (2, 1, 1))
+        self.assertEqual(s["index_count"], 52)
+        self.assertEqual([e["file_id"] for e in ctx.error_items], ["2"])
+        self.assertIn("time_limit=1200s", ctx.error_items[0]["detail"])
+        p1, p2 = s["passes"]
+        self.assertEqual((p1["pass"], p1["submitted"], p1["added"], p1["failed"]), (1, 3, 1, 2))
+        self.assertEqual((p2["pass"], p2["submitted"], p2["added"], p2["failed"]), (2, 2, 1, 1))
+        self.assertEqual((ctx.total, ctx.done, ctx.errors), (3, 3, 1))
+
+    def test_the_report_lists_passes_and_recovered_files(self):
+        self._fake(first={"1": self.TIMEOUT, "2": self.TIMEOUT},
+                   second={"2": self.TIMEOUT})
+        text = self._report(self._run(["0", "1", "2"], retry_timeouts=True))
+        self.assertIn("# Pass 1: workers=4 time_limit=120s submitted=3 added=1", text)
+        self.assertIn("# Pass 2: workers=2 time_limit=1200s submitted=2 added=1", text)
+        recovered = text.split("[RECOVERED IN PASS 2]")[1].split("[FAILED]")[0]
+        self.assertIn("\n1\n", recovered)
+        added = text.split("[ADDED]")[1].split("[RECOVERED")[0]
+        self.assertIn("\n1\n", added)
+        self.assertIn("RETRYABLE\t2", text.split("[FAILED]")[1])
+
+    def test_no_retryable_files_means_no_pass_two(self):
+        self._fake(first={"1": "Failed to load: bad"})
+        ctx = self._run(["0", "1"], retry_timeouts=True)
+        self.assertEqual(len(self.calls), 1)
+        self.assertEqual(len(ctx.summary["passes"]), 1)
+
+    def test_cancellation_is_checked_before_pass_two(self):
+        self._fake(first={"1": self.TIMEOUT})
+        # One check happens before Pass 1; the second is Pass 2's.
+        ctx = _FakeCtx(cancel_after=1)
+        with self.assertRaises(jobstore.JobCanceled):
+            self._run(["0", "1"], ctx=ctx, retry_timeouts=True)
+        self.assertEqual(len(self.calls), 1)
+        # Pass 1's outcome is kept even though the job ends canceled.
+        self.assertEqual(ctx.summary["added"], 1)
+        self.assertEqual([e["file_id"] for e in ctx.error_items], ["1"])
+
+    def test_too_heavy_log_is_read_after_each_pass(self):
+        self._fake(first={"1": self.TIMEOUT})
+        self.heavy_lines = ["C:/cad/big.stp"]
+        ctx = self._run(["0", "1"], retry_timeouts=True)
+        self.assertEqual(self.heavy_reads, 2)
+        self.assertEqual(ctx.summary["heavy_flagged"], 1)  # same file, listed once
+
+    def test_the_retry_phase_and_pass_are_reported(self):
+        self._fake(first={"1": self.TIMEOUT})
+        ctx = self._run(["0", "1"], retry_timeouts=True)
+        self.assertIn("retry", ctx.phases)
+
+    def test_the_request_defaults_to_one_pass(self):
+        from routers.index_jobs import IndexAddJobRequest
+
+        req = IndexAddJobRequest(file_ids=["a"])
+        self.assertEqual((req.retry_timeouts, req.retry_workers, req.retry_time_limit),
+                         (False, None, None))
+        self.assertEqual(IndexAddJobRequest(retry_workers=3).retry_workers, 3)
+
+    def test_pass_two_failing_outright_keeps_pass_ones_results(self):
+        self._fake(first={"1": self.TIMEOUT})
+
+        first = index_registry.add_to_index
+
+        def boom(*a, **k):
+            if self.calls:
+                raise RuntimeError("pool died")
+            return first(*a, **k)
+
+        index_registry.add_to_index = boom
+        ctx = self._run(["0", "1"], retry_timeouts=True)
+        self.assertEqual((ctx.summary["added"], ctx.summary["failed"]), (1, 1))
+        self.assertIn("error", ctx.summary["passes"][1])
 
 
 class TestMatcherPrewarm(TestRunIndexAddJob):

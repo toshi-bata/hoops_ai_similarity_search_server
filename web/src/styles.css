@@ -1931,6 +1931,7 @@ body {
 
 .register-options {
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-end;
   gap: 12px;
   margin: 14px 0 4px;
@@ -1948,6 +1949,18 @@ body {
   width: 90px;
   font-size: 12px;
   padding: 4px 6px;
+}
+
+.register-options .register-retry-toggle {
+  flex-direction: row;
+  align-items: center;
+  gap: 5px;
+  padding-bottom: 6px;
+}
+
+.register-options .register-retry-toggle input {
+  width: auto;
+  padding: 0;
 }
 
 .register-submit {

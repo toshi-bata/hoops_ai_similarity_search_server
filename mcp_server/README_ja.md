@@ -70,7 +70,7 @@ uv sync
 | タグ | `list_tags`、`parts_by_tag` | `GET .../tags`、`GET .../parts?tags=` |
 | | `set_part_tags`、`tag_parts`、`untag_parts` | `PUT .../parts/{id}/tags`、`POST` / `DELETE .../tags/{tag}/parts` |
 | 登録 | `create_index(name)` | `POST /similarity/index/create` |
-| | `register_files(index, paths, folder, recursive)` | `POST /files/upload-from-path`、`POST .../jobs/add` |
+| | `register_files(index, paths, folder, recursive, retry_timeouts)` | `POST /files/upload-from-path`、`POST .../jobs/add` |
 | | `job_status`、`job_report` | `GET .../jobs/{id}`、`GET .../jobs/{id}/report` |
 
 取り消せない操作（タグの廃止、全タグの一括削除、インデックスやパーツの削除）は
@@ -88,7 +88,9 @@ API の制約に関する注記:
 - `get_part` と `list_parts(filename=...)` は、1 件取得や名前フィルターの API が
   ないため、一覧をページ送りして探します。
 - `register_files` は各ファイルをパスでアップロードしてからジョブを投入します
-  （1 回 500 件まで）。残りは続けて呼び出してください。
+  （1 回 500 件まで）。残りは続けて呼び出してください。ジョブは時間切れのファイルを
+  2 パス目で再試行します（`retry_timeouts`、既定でオン。1 パスだけにするには
+  `false`）。`job_status` は `current_pass` と、パスごとの要約 `passes` を返します。
 
 ## 自動起動と `stop_server`
 

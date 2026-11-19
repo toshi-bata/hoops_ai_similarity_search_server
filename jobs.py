@@ -138,9 +138,11 @@ def annotate_failures(errors: list[dict[str, Any]]) -> list[dict[str, Any]]:
     bridge's C ABI drops the reason on the way out; running the SDK in-process,
     this server gets it directly and needs no such fallback.
 
-    The flag exists because only the server sees the reason. **The decision to
-    retry stays with the client**, which resubmits the retryable file_ids as a
-    second job with a longer ``time_limit`` and fewer ``workers``.
+    The flag exists because only the server sees the reason. The decision to
+    retry is the caller's: a job with ``retry_timeouts`` acts on it itself in a
+    second pass (see :func:`run_index_add_job`); otherwise the client resubmits
+    the retryable file_ids as a second job with a longer ``time_limit`` and
+    fewer ``workers``.
 
     Returns a new list; the input is not modified.
     """
@@ -165,8 +167,16 @@ def _write_add_job_report(
     timings: dict[str, Any],
     collapsed_paths: Optional[dict[str, list[str]]] = None,
     selected_count: Optional[int] = None,
+    passes: Optional[list[dict[str, Any]]] = None,
+    recovered: Optional[list[str]] = None,
 ) -> None:
     """Write the registration report (ADDED / FAILED / HEAVY-FLAGGED / DUPLICATES).
+
+    *passes* is given only when a second pass ran, and adds one header line per
+    pass; *recovered* then names the files that pass saved, listed in
+    ``[RECOVERED IN PASS 2]`` as well as in ``[ADDED]``. *added* and *failed*
+    are the final state either way. A job that stopped after Pass 1 passes
+    neither and gets the report it always did.
 
     The groups answer the operator's question directly: which parts are in the
     index, which are not and why (and whether a longer budget could still save
@@ -235,6 +245,14 @@ def _write_add_job_report(
             limit_text = f"{limit_text} ({note})"
     lines.append(f"# Embedding: num_workers={workers} time_limit={limit_text}")
     lines.append(f"# Elapsed: {_fmt(timings.get('embed_seconds'))}")
+    for entry in passes or []:
+        lines.append(
+            f"# Pass {entry.get('pass')}: workers={entry.get('workers')} "
+            f"time_limit={entry.get('time_limit')}s "
+            f"submitted={entry.get('submitted')} added={entry.get('added')} "
+            f"failed={entry.get('failed')} retryable={entry.get('retryable')} "
+            f"elapsed={_fmt(entry.get('seconds'))}"
+        )
     # "selected" is what the caller picked; "input" is what reached the SDK.
     # The two differ when the selection held byte-identical copies, and that
     # difference is the thing [DUPLICATES] below explains.
@@ -252,6 +270,14 @@ def _write_add_job_report(
     lines.append("")
     lines.append(f"[ADDED] embedded into the index ({len(added)})")
     lines.extend(added)
+
+    if recovered is not None:
+        lines.append("")
+        lines.append(
+            f"[RECOVERED IN PASS 2] timed out in Pass 1, embedded in Pass 2 "
+            f"({len(recovered)})"
+        )
+        lines.extend(recovered)
 
     lines.append("")
     lines.append(
@@ -294,26 +320,39 @@ def run_index_add_job(
     time_limit: Optional[int] = None,
     selected_count: Optional[int] = None,
     collapsed_paths: Optional[dict[str, list[str]]] = None,
+    retry_timeouts: bool = False,
+    retry_workers: Optional[int] = None,
+    retry_time_limit: Optional[int] = None,
 ) -> None:
-    """Job body: register *file_ids* into index *name* in a single SDK call.
+    """Job body: register *file_ids* into index *name*, in one pass or two.
 
-    One job is one pass. The whole input goes to one ``embed_shape_batch``:
-    splitting it into fixed-size chunks was measurably wrong, because each call
-    builds a fresh spawn-based process pool whose every worker reloads the ~2 GB
+    The whole input goes to one ``embed_shape_batch`` (Pass 1): splitting it
+    into fixed-size chunks was measurably wrong, because each call builds a
+    fresh spawn-based process pool whose every worker reloads the ~2 GB
     checkpoint, ~55-60 s per call.
 
-    **The two-pass strategy is the client's to run, not this server's.** A
-    caller registers a corpus with many workers and a short ``time_limit``,
-    reads the ``retryable`` flag on each reported failure, and resubmits just
-    those files as a second job with few workers and a long ``time_limit``.
-    Splitting it this way keeps the commit granularity and the retry policy in
-    the caller's hands; the server's part is to make the decision possible by
-    reporting *why* each file failed (see :func:`annotate_failures`).
+    **The second pass is optional and off by default.** With
+    ``retry_timeouts`` the job goes on to retry, on the same index, the files
+    whose Pass 1 failure was marked ``retryable`` (see
+    :func:`annotate_failures`) -- with fewer workers and a longer budget, which
+    is the trade the heavy assemblies that time out need. ``retry_workers`` and
+    ``retry_time_limit`` override the defaults, which are the plan's
+    ``retry_pass`` for the number of files being retried
+    (:func:`index_registry.plan_embedding_run`). Permanent failures are never
+    retried. Without ``retry_timeouts`` the job stops after Pass 1 and a client
+    that wants a retry resubmits the retryable file_ids itself, as a second
+    job; the report and the summary say which files are worth it.
+
+    The summary and the report describe the *final* state: a file recovered in
+    Pass 2 is no longer a failure, and ``added`` counts both passes. The
+    per-pass figures are in ``summary['passes']``.
 
     Consequences, both accepted deliberately:
-      * Cancellation is only observed before the call starts. ``embed_shape_batch``
-        is a single blocking call that cannot be interrupted.
-      * A crash mid-job loses that job's work. Callers control the commit
+      * Cancellation is only observed before each pass starts.
+        ``embed_shape_batch`` is a single blocking call that cannot be
+        interrupted. A cancel that arrives during Pass 1 skips Pass 2, keeps
+        what Pass 1 did, and ends the job as canceled.
+      * A crash mid-pass loses that pass's work. Callers control the commit
         granularity by splitting a large corpus across several jobs.
 
     Failures are recorded per file with the reason reported by the SDK, never
@@ -375,6 +414,7 @@ def run_index_add_job(
     # total is ignored: progress.total is the number of files this job submitted,
     # which is the number the client asked about.
     seen_phase = {"value": "embedding"}
+    current_pass = {"value": 1}
 
     def _on_progress(
         phase: str, done: int, _bar_total: int, err_count: int, heavy: int
@@ -384,7 +424,8 @@ def run_index_add_job(
             fields["errors"] = int(err_count)
         if heavy >= 0:
             fields["heavy"] = int(heavy)
-        if phase != seen_phase["value"]:
+        # The second pass stays "retry" whatever phase the SDK's bar is in.
+        if phase != seen_phase["value"] and current_pass["value"] == 1:
             seen_phase["value"] = phase
             fields["phase"] = phase
         try:
@@ -409,21 +450,33 @@ def run_index_add_job(
         return storage.original_filename(line)
 
     heavy_flagged = [_display_stored(line) for line in heavy_flagged]
-    errors = annotate_failures(list(result.get("errors") or []))
-    for err in errors:
-        fid = str(err.get("file_id") or "")
-        if fid in display_by_fid:
-            # Assigned, not set as a default: whatever the SDK put here is one
-            # of its own stored paths, which is the thing being kept off the
-            # report.
-            err["filename"] = display_by_fid[fid]
-        elif err.get("filename"):
-            err["filename"] = storage.original_filename(err["filename"])
+
+    def _resolve_errors(raw: dict[str, Any]) -> list[dict[str, Any]]:
+        found = annotate_failures(list(raw.get("errors") or []))
+        for err in found:
+            fid = str(err.get("file_id") or "")
+            if fid in display_by_fid:
+                # Assigned, not set as a default: whatever the SDK put here is
+                # one of its own stored paths, which is the thing being kept
+                # off the report.
+                err["filename"] = display_by_fid[fid]
+            elif err.get("filename"):
+                err["filename"] = storage.original_filename(err["filename"])
+        return found
+
+    errors = _resolve_errors(result)
 
     added = int(result.get("added", 0))
     updated = int(result.get("updated", 0))
     index_count = int(result.get("index_count", 0))
     retryable = sum(1 for e in errors if e.get("retryable"))
+    passes: list[dict[str, Any]] = [{
+        "pass": 1, "workers": workers,
+        "time_limit": limit or _SDK_DEFAULT_TIME_LIMIT_SECONDS,
+        "submitted": total,
+        "added": added, "failed": len(errors), "retryable": retryable,
+        "seconds": timings["embed_seconds"],
+    }]
 
     # Accounting guard: every submitted file must be added, updated or reported
     # as failed. A silent shortfall means the SDK contract moved.
@@ -434,21 +487,116 @@ def run_index_add_job(
             "(added/updated/errors); some inputs were not reported",
             name, total, accounted,
         )
-    if retryable:
+    if retryable and not retry_timeouts:
         logger.info(
             "[JOB] index '%s': %d of %d failure(s) are retryable; resubmit them "
             "with a longer time_limit and fewer workers",
             name, retryable, len(errors),
         )
 
+    # Pass 2: only the files whose failure was retryable, on the same index.
+    recovered_ids: Optional[list[str]] = None
+    canceled_before_retry = False
+    retry_ids = list(dict.fromkeys(
+        str(e.get("file_id") or "") for e in errors if e.get("retryable")
+    ))
+    retry_ids = [f for f in retry_ids if f in display_by_fid]
+    if retry_timeouts and retry_ids:
+        import jobstore  # lazily, like get_index_job_store
+
+        try:
+            ctx.check_canceled()
+        except jobstore.JobCanceled:
+            canceled_before_retry = True
+            logger.info(
+                "[JOB] index '%s': canceled before the retry pass; keeping the "
+                "first pass's results", name,
+            )
+    if retry_timeouts and retry_ids and not canceled_before_retry:
+        plan = index_registry.plan_embedding_run(len(retry_ids))["retry_pass"]
+        r_workers = retry_workers if retry_workers is not None else plan["workers"]
+        r_workers = max(1, min(int(r_workers), len(retry_ids)))
+        r_limit = retry_time_limit if retry_time_limit is not None else plan["time_limit"]
+        logger.info(
+            "[JOB] index '%s': retry pass starting: %d timed-out file(s), "
+            "workers=%d, time_limit=%ds",
+            name, len(retry_ids), r_workers, r_limit,
+        )
+        current_pass["value"] = 2
+        ctx.set_total(len(retry_ids))
+        ctx.set_progress(**{"pass": 2, "phase": "retry", "done": 0, "errors": 0, "heavy": 0})
+        t1 = time.perf_counter()
+        result2: dict[str, Any] = {}
+        pass_error: Optional[str] = None
+        try:
+            result2 = index_registry.add_to_index(
+                name, retry_ids, num_workers=r_workers, time_limit=r_limit,
+                log_dir=artifacts, progress_cb=_on_progress,
+            )
+        except Exception as exc:  # Pass 1's work is already in the index
+            pass_error = f"{type(exc).__name__}: {exc}"
+            logger.warning("[JOB] index '%s': retry pass failed: %s", name, pass_error)
+        seconds2 = round(time.perf_counter() - t1, 3)
+        timings["embed_seconds"] = round(timings["embed_seconds"] + seconds2, 3)
+
+        # Read now as well: Pass 1's lines were taken before this call replaced
+        # the log, and these are the heavy files of the retry.
+        for line in storage.read_too_heavy_files(artifacts):
+            shown = _display_stored(line)
+            if shown not in heavy_flagged:
+                heavy_flagged.append(shown)
+
+        if pass_error is None:
+            errors2 = _resolve_errors(result2)
+            for err in errors2:
+                err["detail"] = f"{err['detail']} (retry pass, time_limit={r_limit}s)"
+            failed2 = {str(e.get("file_id") or ""): e for e in errors2}
+            retry_set = set(retry_ids)
+            recovered_ids = [f for f in retry_ids if f not in failed2]
+            errors = [
+                failed2.get(fid, e)
+                for e in errors
+                for fid in (str(e.get("file_id") or ""),)
+                if fid not in retry_set or fid in failed2
+            ]
+            added2 = int(result2.get("added", 0))
+            added += added2
+            updated += int(result2.get("updated", 0))
+            index_count = int(result2.get("index_count", index_count))
+            retryable = sum(1 for e in errors if e.get("retryable"))
+            entry = {
+                "pass": 2, "workers": r_workers, "time_limit": r_limit,
+                "submitted": len(retry_ids), "added": added2,
+                "failed": len(errors2),
+                "retryable": sum(1 for e in errors2 if e.get("retryable")),
+                "seconds": seconds2,
+            }
+        else:
+            entry = {
+                "pass": 2, "workers": r_workers, "time_limit": r_limit,
+                "submitted": len(retry_ids), "added": 0,
+                "failed": len(retry_ids), "retryable": len(retry_ids),
+                "seconds": seconds2, "error": pass_error,
+            }
+        passes.append(entry)
+        logger.info(
+            "[JOB] index '%s': retry pass finished in %.1fs: %d of %d file(s) "
+            "recovered, %d still failing",
+            name, seconds2, entry["added"], len(retry_ids), entry["failed"],
+        )
+
     ctx.add_errors(errors)
     # Absolute, not incremental: the live callback above has already been moving
     # progress.done, so incrementing here would count the batch twice.
-    ctx.set_progress(done=total, errors=len(errors), heavy=len(heavy_flagged))
+    ctx.set_total(total)
+    ctx.set_progress(
+        done=total, errors=len(errors), heavy=len(heavy_flagged),
+        **{"pass": len(passes)},
+    )
     ctx.set_summary(
         added=added, updated=updated, failed=len(errors), skipped=0,
         index_count=index_count, heavy_flagged=len(heavy_flagged),
-        retryable=retryable,
+        retryable=retryable, passes=passes,
     )
     ctx.set_timings(**timings)
 
@@ -486,6 +634,11 @@ def run_index_add_job(
             timings,
             collapsed,
             selected_count,
+            passes=passes if len(passes) > 1 else None,
+            recovered=(
+                [display_by_fid.get(f, f) for f in recovered_ids]
+                if recovered_ids is not None else None
+            ),
         )
         ctx.set_summary(report=True)
     except Exception as exc:  # a missing report must never fail a good job
@@ -505,3 +658,8 @@ def run_index_add_job(
             prewarm_shape_map(name)
         except Exception as exc:  # never fail a completed job over a warm-up
             logger.warning("[JOB] could not start shape-map prewarm: %s", exc)
+
+    if canceled_before_retry:
+        raise jobstore.JobCanceled(
+            "Canceled before the retry pass; the first pass's results were kept."
+        )

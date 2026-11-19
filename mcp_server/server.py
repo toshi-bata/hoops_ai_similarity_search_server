@@ -753,12 +753,15 @@ def collect_paths(paths: Optional[list], folder: Optional[str], recursive: bool)
 
 @mcp.tool()
 def register_files(index: str, paths: Optional[list[str]] = None,
-                   folder: Optional[str] = None, recursive: bool = False) -> dict:
+                   folder: Optional[str] = None, recursive: bool = False,
+                   retry_timeouts: bool = True) -> dict:
     """Start a background job that registers files in an index.
 
     Files are paths on the server machine. At most 500 files are taken per
     call and the call stops uploading after about 50 s; call again for the
-    rest (re-uploads are harmless). The job is not awaited: use job_status.
+    rest (re-uploads are harmless). With retry_timeouts (the default) the job
+    retries files that timed out in a second pass with fewer workers and a
+    longer time limit. The job is not awaited: use job_status.
     """
     try:
         files = collect_paths(paths, folder, recursive)
@@ -776,7 +779,8 @@ def register_files(index: str, paths: Optional[list[str]] = None,
                 failed.append({"path": p, "error": str(exc)[:200]})
         if not ids:
             return {"error": "No file could be uploaded.", "failed": failed[:5]}
-        job = api("POST", f"{_ix(index)}/jobs/add", json={"file_ids": ids})
+        job = api("POST", f"{_ix(index)}/jobs/add",
+                  json={"file_ids": ids, "retry_timeouts": bool(retry_timeouts)})
     except SimError as exc:
         return {"error": str(exc)}
     done = len(ids) + len(failed)
@@ -795,6 +799,13 @@ def job_status(index: str, job_id: str) -> dict:
     keep = ("job_id", "status", "progress", "summary", "detail", "created_at",
             "started_at", "finished_at")
     out = {k: d.get(k) for k in keep}
+    out["current_pass"] = (d.get("progress") or {}).get("current_pass", 1)
+    passes = (d.get("summary") or {}).get("passes") or []
+    out["passes"] = [
+        {k: p.get(k) for k in ("pass", "workers", "time_limit", "submitted",
+                               "added", "failed", "retryable", "seconds")}
+        for p in passes if isinstance(p, dict)
+    ]
     errs = d.get("errors") or []
     out["error_count"] = len(errs)
     out["errors"] = [str(e)[:200] for e in errs[:5]]
